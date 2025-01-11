@@ -300,5 +300,5 @@ if __name__ == "__main__":
     parser.add_argument("--config_path", type=str, required=True, help="Path to your config file. Use the same one you used for training!")
     args = parser.parse_args()
 
-    inference_handler = ZarrInferenceHandler(config_file=args.config_file)
+    inference_handler = ZarrInferenceHandler(config_file=args.config_path)
     inference_handler.infer()

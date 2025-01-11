@@ -4,10 +4,9 @@ from typing import List, Dict, Union, Tuple
 import zarr
 import tifffile
 import numpy as np
-from models.transforms.normalization import ct_normalize
 import torch
 from torch.utils.data import Dataset
-from models.helpers import generate_positions
+from helpers import generate_positions
 from pytorch3dunet.augment.transforms import Standardize
 
 class InferenceDataset(Dataset):
@@ -63,9 +62,9 @@ class InferenceDataset(Dataset):
         patch = self.input_array[z:z+self.patch_size[0], y:y+self.patch_size[1], x:x+self.patch_size[2]]
 
         if self.input_dtype == np.uint8:
-            patch /= 255.0
+            patch = patch.astype(np.float32) / 255.0
         elif self.input_dtype == np.uint16:
-            patch /= 65535.0
+            patch = patch.astype(np.float32) / 65535.0
 
         patch = self.normalization(patch)
         patch = patch.astype(np.float32)
