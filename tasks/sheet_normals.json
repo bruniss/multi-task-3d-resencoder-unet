@@ -14,9 +14,9 @@
         "max_val_steps_per_epoch": 25,
         "max_epoch": 500,
         "gradient_accumulation": 1,
-        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/SheetNorm_325.pth",
-        "load_weights_only": true,
-        "ckpt_out_base": "/mnt/raid_hdd/models/normals/checkpoints/augs_and_s4",
+        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/augs_and_s4_new/SheetNorm_95.pth",
+        "load_weights_only": false,
+        "ckpt_out_base": "/mnt/raid_hdd/models/normals/checkpoints/augs_and_s4_new",
         "optimizer": "AdamW",
         "num_dataloader_workers": 4,
         "tensorboard_log_dir": "/home/sean/Desktop/tensorboard"
@@ -24,10 +24,10 @@
 
     "inference_params":{
         "patch_size": [64, 192, 192],
-        "batch_size": 4,
+        "batch_size": 6,
         "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/SheetNorm_301.pth",
-        "num_dataloader_workers": 4,
-        "input_path": "/mnt/raid_nvme/s4.zarr",
+        "num_dataloader_workers":8,
+        "input_path": "/mnt/raid_nvme/s1_cutout_outer.zarr",
         "input_format": "zarr",
         "output_dir": "/mnt/raid_nvme/inference_out",
         "output_format": "zarr",
@@ -46,7 +46,6 @@
         "min_bbox_percent": 0.95,
         "use_cache": true,
         "cache_file": "/home/sean/Documents/GitHub/VC-Surface-Models/models/64_192_192_patch_cache_ands4.json",
-        "normalization": "ct_normalization",
         
         "volume_paths": [
             {
@@ -73,7 +72,7 @@
             "normals": {
                 "channels": 3,
                 "activation": "none",
-                "weight": 0.75
+                "weight": 1
             }
     
         }

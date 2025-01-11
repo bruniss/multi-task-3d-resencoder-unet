@@ -379,7 +379,11 @@ class BaseTrainer:
         torch.save(model.state_dict(), f'{self.model_name}_final.pth')
 
 if __name__ == '__main__':
-    trainer = BaseTrainer("/home/sean/Documents/GitHub/VC-Surface-Models/models/tasks/sheet_normals.json")
+    import argparse
+    parser = argparse.ArgumentParser(description="Train script for MultiTaskResidualUNetSE3D.")
+    parser.add_argument("--config_path", type=str, required=True, help="Path to your config file. Use the same one you used for training!")
+    args = parser.parse_args()
+    trainer = BaseTrainer(args.config_path)
     trainer.train()
 
 

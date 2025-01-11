@@ -193,9 +193,12 @@ def masked_cosine_loss(pred, target):
 
     mag = torch.norm(target, dim=1)         # [B, D, H, W]
     mask = (mag > 1e-6).float()             # [B, D, H, W]
-    pred_norm = torch.norm(pred, dim=1, keepdim=True).clamp(min=1e-8)
-    pred_unit = pred / pred_norm
-    cos_sim = F.cosine_similarity(pred_unit, target, dim=1, eps=1e-8)  # [B, D, H, W]
+    # i removed the normalization because it was making it hard for the model
+    # i can just handle normalization after inference, comment out below
+    # lines to turn it back on
+    # pred_norm = torch.norm(pred, dim=1, keepdim=True).clamp(min=1e-8)
+    # pred_unit = pred / pred_norm
+    cos_sim = F.cosine_similarity(pred, target, dim=1, eps=1e-8)  # [B, D, H, W]
     cos_sim_masked = cos_sim * mask
     valid_count = mask.sum() + 1e-8
     mean_cos_sim = cos_sim_masked.sum() / valid_count

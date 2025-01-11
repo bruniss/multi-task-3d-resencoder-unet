@@ -1,5 +1,7 @@
 # lots borrowed from discord user @Mojonero, who kindly shared his s2 starter here: https://discord.com/channels/1079907749569237093/1204133327083147264/1204133327083147264
 from typing import Tuple, Union, List
+
+import volumentations
 import zarr
 from multiprocessing import Pool
 from pathlib import Path
@@ -18,6 +20,9 @@ import albumentations as A
 from pytorch3dunet.augment.transforms import Standardize
 from helpers import _find_valid_patches
 from transforms.geometric.geometry import RandomFlipWithNormals, RandomRotate90WithNormals
+
+from volumentations import Compose as vCompose
+from volumentations import ElasticTransform
 
 class ZarrSegmentationDataset3D(Dataset):
     def __init__(self,
@@ -230,6 +235,12 @@ class ZarrSegmentationDataset3D(Dataset):
         flip = RandomFlipWithNormals(p_transform=0.15)
         data_dict = rotate(data_dict)
         data_dict = flip(data_dict)
+
+        if "normals" not in data_dict and "normal" not in data_dict:
+            v_transform = vCompose([
+              ElasticTransform(p=1.0)
+            ], p=0.15)
+            data_dict = v_transform(data_dict)
 
         # convert image to tensors, adding an additional channel for single channel input data
         # input -> [C, D, H, W]

@@ -130,6 +130,7 @@ class ZarrInferenceHandler:
 
         model.eval()
         with torch.no_grad():
+
             # ---- first pass , raw data => float32 preds ---- #
             for batch_idx, data in tqdm(enumerate(loader), total=len(loader), desc="Running inference on patches..."):
                 patches = data["image"].to(device)  # (batch, in_channels, z, y, x)
@@ -227,23 +228,23 @@ class ZarrInferenceHandler:
         #    del zarr_store[arr_name]
 
         # ---- final pass ---- #
-        # cast float32 arrays to uint8 or 16
+        # cast float32 arrays to uint8 or uint16
         for tgt_name in self.output_targets:
             sum_ds = output_arrays[tgt_name]  # float32 "sum" dataset (already averaged)
             c = self.targets[tgt_name]["channels"]
 
-            # final dtype
+            # decide the final data type
+            # we want "normals" in uint16, everything else in uint8
             if tgt_name.lower() == "normals":
                 final_dtype = "uint16"
             else:
                 final_dtype = "uint8"
 
-            # shape is hopefully (z_max, y_max, x_max) or (c, z_max, y_max, x_max)
+            # shape is (z_max, y_max, x_max) or (c, z_max, y_max, x_max)
             out_shape = sum_ds.shape
-
             compressor = Blosc(cname='zstd', clevel=5, shuffle=Blosc.BITSHUFFLE)
 
-            # final dataset
+            # create the final dataset to store scaled integer values
             final_ds = zarr_store.create_dataset(
                 name=f"{tgt_name}_final",
                 shape=out_shape,
@@ -271,20 +272,23 @@ class ZarrInferenceHandler:
                         # read the float32 block from sum_ds
                         float_block = sum_ds[..., z0:z1, y0:y1, x0:x1]
 
-                        # different scaling depending on whether it's "normals" or not
+                        # scale & cast depending on target
                         if tgt_name.lower() == "normals":
-                            # [-1..1] -> [0..65535]
-                            int_block = (float_block + 1.0) / 2.0
-                            int_block *= 65535.0
+                            # normals are in [-1,1].
+                            # scale them into [0,65000] for uint16.
+                            int_block = (float_block + 1.0) / 2.0  # map [-1..1] => [0..1]
+                            int_block *= 65535.0  # map [0..1] => [0..65000]
                             np.clip(int_block, 0, 65535, out=int_block)
                             int_block = int_block.astype(np.uint16)
+
                         else:
-                            # [0..1] -> [0..255]
+                            # everything else is already in [0,1].
+                            # Scale into [0,255] for uint8.
                             int_block = float_block * 255.0
                             np.clip(int_block, 0, 255, out=int_block)
                             int_block = int_block.astype(np.uint8)
 
-                        # final write
+                        # 3) Write the scaled integer block back out
                         final_ds[..., z0:z1, y0:y1, x0:x1] = int_block
 
 
