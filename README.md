@@ -13,7 +13,7 @@ the primary focus of creating this was to enable efficient multi-task learning w
 
 **automatic patch finding**: provided with a reference labeled zarr array, the dataset will find patches that meet the requirements for both volumetric size within the patch and label density within it. this allows for passing gigantic but relatively sparsely labeled datasets and only performing training on the areas which are densely labeled. this list is then saved to a json so you will not have to run this computation again, provided your patch size has not changed.
 
-**easily applied augmentations**: within the dataset the augmentation is placed before conversion to tensors, and after the appropriate scaling of data to [0:1] , and all data of type float32. any operation you wish to add here is simple enough to add and given all data is in the same intensity range, of the same shape, and of the same dtype (at this stage float32). additional channels have not yet been added, so keep in mind if you have multichannel data , the channel dimension is now the first one.
+**surface normal rotations/flips**: includes augmentations to apply proper rotation and flipping for surface normals along with other targets
 
 **a clear dataset and train path**: all data is stored in dictionaries where the key is the name of your provided target. this makes extending or modifying relatively easy, and even someone without much python experience should be able to follow what is happening in each stage.
 
