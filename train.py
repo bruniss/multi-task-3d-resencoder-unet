@@ -15,8 +15,8 @@ from torch.utils.data import DataLoader, SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
 from dataloading.dataset import ZarrSegmentationDataset3D
-from visualization.plotting import save_debug_gif,log_3d_slices_as_images
-from losses.losses import masked_cosine_loss, BCEWithLogitsLossLabelSmoothing
+from visualization.plotting import save_debug_gif,log_3d_slices_as_images, debug_dataloader_plot, export_data_dict_as_tif
+from losses.losses import masked_cosine_loss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss
 
 
 class BaseTrainer:
@@ -35,7 +35,9 @@ class BaseTrainer:
             tasks: dictionary of tasks to be used in the model, each task must contain the number of channels and the activation type
             """
 
-    def __init__(self, config_file: str):
+    def __init__(self,
+                 config_file: str,
+                 debug_dataloader: bool = False):
         with open(config_file, "r") as f:
             config = json.load(f)
 
@@ -67,8 +69,10 @@ class BaseTrainer:
         self.weight_decay = float(getattr(tr_params, "weight_decay", 1e-4))
         self.ckpt_out_base = Path(getattr(tr_params, "ckpt_out_base", "./checkpoints/"))
         self.checkpoint_path = getattr(tr_params, "checkpoint_path", None)
+        self.load_weights_only = getattr(tr_params, "load_weights_only", False)
         self.num_dataloader_workers = int(getattr(tr_params, "num_dataloader_workers", 4))
         self.tensorboard_log_dir = str(getattr(tr_params, "tensorboard_log_dir", "./tensorboard_logs/"))
+        self.debug_dataloader = debug_dataloader
         self.loss_fns = {} # these get defined later
 
         self.normalization = Standardize(channelwise=False)
@@ -118,6 +122,15 @@ class BaseTrainer:
             cache_file=Path(self.cache_file)
         )
 
+        if self.debug_dataloader:
+            export_data_dict_as_tif(
+                dataset=dataset,
+                num_batches=10,
+                out_dir="my_debug_dir"  # directory for saving .png files
+            )
+            print("Debug dataloader plots generated; exiting training early.")
+            return  # <--- ends the 'train' function here
+
         device = torch.device('cuda')
         model = torch.compile(model)
         model = model.to(device)
@@ -132,8 +145,8 @@ class BaseTrainer:
                 self.loss_fns[task_name] = masked_cosine_loss
 
             else:
-                self.loss_fns[task_name] = BCEWithLogitsLossLabelSmoothing(smoothing=self.label_smoothing)
-
+                #self.loss_fns[task_name] = BCEWithLogitsLossLabelSmoothing(smoothing=self.label_smoothing)
+                self.loss_fns[task_name] = BCEDiceLoss(alpha=0.5, beta=0.5)
         if self.optimizer == "SGD":
             optimizer = SGD(
                 model.parameters(),
@@ -166,7 +179,7 @@ class BaseTrainer:
         # apply gradient accumulation
         grad_accumulate_n = self.gradient_accumulation
 
-        scaler = torch.amp.GradScaler('cuda')
+        scaler = torch.cuda.amp.GradScaler()
 
         # ---- dataloading ----- #
 
@@ -182,22 +195,29 @@ class BaseTrainer:
                                     num_workers=self.num_dataloader_workers)
 
         start_epoch = 0
-        if self.checkpoint_path is not None and self.checkpoint_path.exists():
+        if self.checkpoint_path is not None and Path(self.checkpoint_path).exists():
             print(f"Loading checkpoint from {self.checkpoint_path}")
             checkpoint = torch.load(self.checkpoint_path, map_location=device)
+
+            # Always load model weights
             model.load_state_dict(checkpoint['model'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            scheduler.load_state_dict(checkpoint['scheduler'])
 
-            start_epoch = checkpoint['epoch'] + 1
-
-            print(f"Resuming training from epoch {start_epoch + 1}")
+            if not self.load_weights_only:
+                # Only load optimizer, scheduler, epoch if we are NOT in "weights_only" mode
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                scheduler.load_state_dict(checkpoint['scheduler'])
+                start_epoch = checkpoint['epoch'] + 1
+                print(f"Resuming training from epoch {start_epoch + 1}")
+            else:
+                # Start a 'new run' from epoch 0 or 1
+                start_epoch = 0
+                scheduler = CosineAnnealingLR(optimizer, T_max=self.max_epoch, eta_min=0)
+                print("Loaded model weights only; starting new training run from epoch 1.")
 
         writer = SummaryWriter(log_dir=self.tensorboard_log_dir)
         global_step = 0
         # ---- training! ----- #
         for epoch in range(start_epoch, self.max_epoch):
-            optimizer.zero_grad(set_to_none=True)
             model.train()
 
             train_running_losses = {t_name: 0.0 for t_name in self.tasks}
@@ -218,7 +238,7 @@ class BaseTrainer:
                 }
 
                 # forward
-                with torch.amp.autocast('cuda'):
+                with torch.cuda.amp.autocast():
                     outputs = model(inputs)
                     total_loss = 0.0
                     per_task_losses = {}
@@ -287,7 +307,7 @@ class BaseTrainer:
                             if k != "image"
                         }
 
-                        with torch.amp.autocast('cuda'):
+                        with torch.cuda.amp.autocast():
                             outputs = model(inputs)
                             total_val_loss = 0.0
                             for t_name, t_gt in targets_dict.items():
@@ -321,8 +341,8 @@ class BaseTrainer:
                                     tasks_dict=self.tasks,
                                     # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
                                     epoch=epoch,
-                                    save_path=f"{epoch}_debug.gif",
-                                    show_normal_magnitude=True  # show normal magnitude if your "normals" task exists
+                                    save_path=f"{self.model_name}_{epoch}_debug.gif",
+                                    show_normal_magnitude=("normals" in targets_dict_first)  # show normal magnitude if your "normals" task exists
                                 )
 
                                 # Log 2D slices to TensorBoard --
@@ -382,9 +402,13 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description="Train script for MultiTaskResidualUNetSE3D.")
     parser.add_argument("--config_path", type=str, required=True, help="Path to your config file. Use the same one you used for training!")
+    parser.add_argument("--debug_dataloader", action="store_true")
     args = parser.parse_args()
-    trainer = BaseTrainer(args.config_path)
+
+    trainer = BaseTrainer(args.config_path, args.debug_dataloader)
     trainer.train()
+
+
 
 
 

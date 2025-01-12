@@ -3,3 +3,4 @@
 *.tif
 *.pyc
 /.idea
+/my_debug_dir

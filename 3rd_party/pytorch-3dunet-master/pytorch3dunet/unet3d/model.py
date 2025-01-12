@@ -315,7 +315,7 @@ class MultiTaskResidualUNetSE3D(ResidualUNetSE3D):
         # For each task, create a decoder path and final conv
         for task_name, task_info in self.tasks.items():
             out_channels = task_info["channels"]
-            activation_str = task_info.get("activation", "sigmoid")  # default is 'sigmoid' if not specified
+            activation_str = task_info.get("activation", "none")  # default is 'sigmoid' if not specified
 
             # Create the decoder path for this task
             self.task_decoders[task_name] = create_decoders(

@@ -152,12 +152,6 @@ class ZarrSegmentationDataset3D(Dataset):
             # convert to float32, still in original values
             t_patch = t_arr[patch_slice].astype(np.float32)
 
-            # scale image values from 0 to 255/65k => 0 to 1
-            if t_arr.dtype == np.uint8:
-                t_patch /= 255.0
-            elif t_arr.dtype == np.uint16:
-                t_patch /= 65535.0
-
             if task_name.lower() == "normals":
                 # Handle normals stored in uint16 format from your mesh processing
                 if t_arr.dtype == np.uint16:
@@ -169,6 +163,13 @@ class ZarrSegmentationDataset3D(Dataset):
                 # reorder if channels-last
                 if t_patch.ndim == 4:  # e.g. (Z, Y, X, C)
                     t_patch = t_patch.transpose(3, 0, 1, 2).copy() # (z, y, x, c) => (c, z, y, x)
+
+            else:
+                # scale image values from 0 to 255/65k => 0 to 1
+                if t_arr.dtype == np.uint8:
+                    t_patch /= 255.0
+                elif t_arr.dtype == np.uint16:
+                    t_patch /= 65535.0
 
             # apply an optional label dilation you can set in the json
             if (task_name.lower() == "sheet") and self.dilate_label:
@@ -190,7 +191,7 @@ class ZarrSegmentationDataset3D(Dataset):
 
             # illumination
             A.OneOf([
-                A.RandomBrightnessContrast(),
+                #A.RandomBrightnessContrast(),
                 A.AutoContrast(),
                 A.Illumination(),
             ], p=0.3),
@@ -213,12 +214,12 @@ class ZarrSegmentationDataset3D(Dataset):
         # dropout
         vol_transform = A.Compose([
                 A.CoarseDropout3D(fill=0.5,
-                                  num_holes_range=(1, 5),
-                                  hole_depth_range=(0.2, 0.40),
-                                  hole_height_range=(0.2, 0.40),
-                                  hole_width_range=(0.2, 0.40))
+                                  num_holes_range=(1, 3),
+                                  hole_depth_range=(0.1, 0.5),
+                                  hole_height_range=(0.1, 0.5),
+                                  hole_width_range=(0.1, 0.5))
         ],
-            p=0.6
+            p=0.5
         )
 
         # apply the 2d augs to an "image" key only, these apply per slice
@@ -231,16 +232,16 @@ class ZarrSegmentationDataset3D(Dataset):
 
         # i have to use different rotations/flips here because of normal vectors
         # this still applies if you do not have a key called normals, it just wont do the sign flipping/rotations
-        rotate = RandomRotate90WithNormals(axes=('z',), p_transform=0.15)
-        flip = RandomFlipWithNormals(p_transform=0.15)
+        rotate = RandomRotate90WithNormals(axes=('z',), p_transform=0.25)
+        flip = RandomFlipWithNormals(p_transform=0.25)
         data_dict = rotate(data_dict)
         data_dict = flip(data_dict)
 
-        if "normals" not in data_dict and "normal" not in data_dict:
-            v_transform = vCompose([
-              ElasticTransform(p=1.0)
-            ], p=0.15)
-            data_dict = v_transform(data_dict)
+        #if "normals" not in data_dict and "normal" not in data_dict:
+            #v_transform = vCompose([
+              #ElasticTransform(p=1.0)
+            #], p=0.15)
+            #data_dict = v_transform(data_dict)
 
         # convert image to tensors, adding an additional channel for single channel input data
         # input -> [C, D, H, W]

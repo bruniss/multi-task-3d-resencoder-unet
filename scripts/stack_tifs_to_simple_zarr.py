@@ -32,7 +32,7 @@ def stack_images_to_zarr(input_folder, output_name):
 
     # Initialize zarr array with known dimensions
     z = zarr.open(zarr_path, mode='w', shape=(len(image_files), height, width),
-                  chunks=(1, height, width), dtype=first_img.dtype)
+                  chunks=(20, 128, 128), dtype=first_img.dtype)
 
     # Load and stack images
     for idx, img_path in enumerate(image_files):
@@ -57,6 +57,6 @@ def stack_images_to_zarr(input_folder, output_name):
 
 # Example usage
 if __name__ == "__main__":
-    input_folder = "/mnt/raid_hdd/s1_segments/5753/inklabels"
+    input_folder = "/home/sean/Desktop/s1_segments/0901/inklabels"
     output_name = "inklabels"
     stack_images_to_zarr(input_folder.strip(), output_name)

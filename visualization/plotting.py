@@ -283,3 +283,65 @@ def save_debug_gif(
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Epoch {epoch}] Saving GIF to: {save_path}")
     imageio.mimsave(save_path, frames, fps=fps)
+
+
+import os
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+import tifffile
+def export_data_dict_as_tif(
+    dataset,
+    num_batches: int = 5,
+    out_dir: str = "debug_tifs"
+):
+    """
+    Writes each entry in `data_dict` to a multi-page TIFF, one file per key.
+    Assumes batch_size=1 => shape [B, C, D, H, W].
+    The output TIFF for each key has shape [C*D, H, W] (multi-page stack),
+    preserving exact values (no scaling or axis reorder).
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    for i, data_dict in enumerate(loader):
+        if i >= num_batches:
+            break
+
+        # We'll assume batch_size=1 for simpler visualization
+        for key, tensor in data_dict.items():
+            # shape => [B, C, D, H, W]. Take B=0
+            arr_4d = tensor[0].cpu().numpy()  # shape => [C, D, H, W]
+
+            # Flatten [C,D] into one dimension: => [C*D, H, W]
+            c, d, h, w = arr_4d.shape
+            arr_pages = arr_4d.reshape(c * d, h, w)
+
+            # Write the multi-page TIFF exactly as-is
+            out_path = os.path.join(out_dir, f"batch_{i}_{key}.tif")
+            tifffile.imwrite(out_path, arr_pages, dtype=arr_pages.dtype)
+
+            print(f"Wrote {out_path} with shape {arr_pages.shape} "
+                  f"(original [C,D,H,W] => [C*D,H,W]).")
+
+
+def debug_dataloader_plot(dataset, num_batches=5, slice_idx=0, out_dir="debug_plots"):
+    """
+    Example routine that grabs the first 'num_batches' from the dataset (batch_size=1),
+    creates one figure per batch with subplots for each key in data_dict,
+    and saves it to disk.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    for i, data_dict in enumerate(loader):
+        if i >= num_batches:
+            break
+        plot_data_dict(
+            data_dict=data_dict,
+            batch_idx=i,
+            out_dir=out_dir,
+            slice_idx=slice_idx
+        )
+        print(f"Saved debug plot: batch {i}, slice {slice_idx}")

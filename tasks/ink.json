@@ -1,8 +1,8 @@
 {
     "tr_params":{
         "model_name": "ink",
-        "patch_size": [10, 256, 256],
-        "batch_size": 4,
+        "patch_size": [20, 192, 192],
+        "batch_size": 5,
         "tr_val_split": 0.90,
         "ignore_label": null,
         "loss_only_on_label": false,
@@ -17,7 +17,7 @@
         "load_weights_only": false,
         "ckpt_out_base": "/home/sean/Documents/models/normals/checkpoints/ink",
         "optimizer": "AdamW",
-        "num_dataloader_workers": 4,
+        "num_dataloader_workers": 12,
         "tensorboard_log_dir": "/home/sean/Desktop/tensorboard/ink"
     },
 
@@ -36,35 +36,35 @@
     },
 
     "model_config":{
-        "f_maps": [128, 256, 512, 1024],
-        "num_levels": 4
+        "f_maps": [64, 128, 256, 512, 1024],
+        "num_levels": 5
     },
 
     "dataset_config":{
         "min_labeled_ratio": 0.5,
         "min_bbox_percent": 0.95,
         "use_cache": true,
-        "cache_file": "/home/sean/Documents/GitHub/VC-Surface-Models/models/10_256_256_ink_cache.json",
+        "cache_file": "/home/sean/Desktop/s1_segments/20_256_256_ink_cache.json",
 
         "volume_paths": [
             {
-                "input": "/home/sean/Documents/s1_segments/5753/layers.zarr",
-                "ink": "/home/sean/Documents/s1_segments/5753/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/5753/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/5753/inklabels.zarr",
                 "ref_label": "ink"
             },
             {
-                "input": "/home/sean/Documents/s1_segments/0901/layers.zarr",
-                "ink": "/home/sean/Documents/s1_segments/0901/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/0901/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/0901/inklabels.zarr",
                 "ref_label": "ink"
             },
             {
-                "input": "/home/sean/Documents/s1_segments/4423/layers.zarr",
-                "ink": "/home/sean/Documents/s1_segments/4423/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/4423/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/4423/inklabels.zarr",
                 "ref_label": "ink"
             },
             {
-                "input": "/home/sean/Documents/s1_segments/1321/layers.zarr",
-                "ink": "/home/sean/Documents/s1_segments/1321/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/1321/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/1321/inklabels.zarr",
                 "ref_label": "ink"
             }
         ],

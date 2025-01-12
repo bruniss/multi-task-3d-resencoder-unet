@@ -1,6 +1,6 @@
 {
     "tr_params":{
-        "model_name": "SheetNorm",
+        "model_name": "Ink_try1",
         "patch_size": [64, 192, 192],
         "batch_size": 4,
         "tr_val_split": 0.80,
@@ -14,8 +14,8 @@
         "max_val_steps_per_epoch": 25,
         "max_epoch": 500,
         "gradient_accumulation": 1,
-        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/augs_and_s4_new/SheetNorm_95.pth",
-        "load_weights_only": false,
+        "load_weights_only": true,
+        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/SheetNorm_297.pth",
         "ckpt_out_base": "/mnt/raid_hdd/models/normals/checkpoints/augs_and_s4_new",
         "optimizer": "AdamW",
         "num_dataloader_workers": 4,
