@@ -52,6 +52,7 @@ class ZarrInferenceHandler:
         os.makedirs(self.output_dir, exist_ok=True)
 
     def infer(self):
+        torch.set_float32_matmul_precision('high')
         model = MultiTaskResidualUNetSE3D(
             in_channels=1,
             tasks=self.targets,
@@ -77,7 +78,10 @@ class ZarrInferenceHandler:
         loader = DataLoader(dataset,
                             batch_size=self.batch_size,
                             shuffle=False,
-                            num_workers=self.num_dataloader_workers)
+                            num_workers=self.num_dataloader_workers,
+                            prefetch_factor=2,
+                            pin_memory=True,
+                            persistent_workers=True,)
 
         z_max, y_max, x_max = dataset.input_shape
         output_arrays = {}

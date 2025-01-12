@@ -169,7 +169,6 @@ def log_3d_slices_as_images(
             dataformats='CHW'
         )
 
-
 def save_debug_gif(
     input_volume: torch.Tensor,          # shape [1, C, Z, H, W]
     targets_dict: dict,                 # e.g. {"sheet": tensor([1, Z, H, W]), "normals": tensor([3, Z, H, W])}
@@ -177,32 +176,25 @@ def save_debug_gif(
     tasks_dict: dict,                   # e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
     epoch: int,
     save_path: str = "debug.gif",
-    show_normal_magnitude: bool = True,
+    show_normal_magnitude: bool = True, # We'll set this to False below to avoid extra sub-panels
     fps: int = 5
 ):
     """
     Creates a multi-panel GIF for debugging.
 
     The top row will show: [Input slice] + [GT for each task].
-    The bottom row will show: [Prediction for each task].
-    If a task has 3 channels (normals), we visualize them as BGR. Otherwise, grayscale.
-
-    Args:
-        input_volume (torch.Tensor): shape [1, C, Z, H, W].
-        targets_dict (dict): {task_name: Tensor of shape [1, C, Z, H, W]}.
-        outputs_dict (dict): {task_name: Tensor of shape [1, C, Z, H, W]}.
-        tasks_dict (dict): e.g. {"sheet":{"activation":"sigmoid"}, "normals":{"activation":"none"}}.
-        epoch (int): The current epoch number for reference/logging.
-        save_path (str): Where to save the resulting GIF.
-        show_normal_magnitude (bool): If True, the bottom row for normals includes a magnitude sub-panel.
-        fps (int): frames per second for the GIF.
+    The bottom row will show: [blank tile] + [Prediction for each task].
+    If a task has 3 channels (normals), we visualize them as a single BGR.
+    (We won't add the normal magnitude panel anymore, to avoid width mismatches.)
     """
+
     # Convert input volume to NumPy
     inp_np = input_volume.cpu().numpy()[0]  # => shape [C, Z, H, W]
     if inp_np.shape[0] == 1:
-        inp_np = inp_np[0]  # shape => [Z, H, W] if single-channel
+        # single-channel => shape [Z, H, W]
+        inp_np = inp_np[0]
 
-    # Convert target & prediction volumes to NumPy (apply activation for single-channel tasks if needed)
+    # Convert targets & predictions to NumPy (and apply activation if needed)
     targets_np, preds_np = {}, {}
     for t_name, t_tensor in targets_dict.items():
         arr_np = t_tensor.cpu().numpy()[0]  # => [C, Z, H, W]
@@ -210,53 +202,53 @@ def save_debug_gif(
 
     for t_name, p_tensor in outputs_dict.items():
         arr_np = p_tensor.cpu().numpy()[0]  # => [C, Z, H, W]
-
-        # If single-channel, apply any specified activation
         activation_str = tasks_dict[t_name].get("activation", "none")
         if arr_np.shape[0] == 1:
             arr_np = apply_activation_if_needed(arr_np, activation_str)
         preds_np[t_name] = arr_np
 
-    # Optional: if your normal tasks need re-normalizing to [-1..1], do so here
-    # or rely on your pipeline already having them in [-1..1].
-    # e.g. you can do a “safe_normalize” if you prefer:
-    # if "normals" in preds_np or ...
-    # ...
+    # If you want to remove the normal magnitude sub-panel, set show_normal_magnitude=False:
+    show_normal_magnitude = False
 
     # Build frames
     frames = []
-    z_dim = inp_np.shape[0] if inp_np.ndim == 3 else inp_np.shape[1]  # if input is single-channel, shape is [Z, H, W]
+    z_dim = inp_np.shape[0] if inp_np.ndim == 3 else inp_np.shape[1]
     task_names = sorted(list(targets_dict.keys()))
 
     for z_idx in range(z_dim):
-        # Top row: input + GTs
+        # -----------------------------
+        # TOP ROW: [Input] + [GT tasks]
+        # -----------------------------
         top_row_imgs = []
 
-        # -- Input slice
+        # 1) Input slice
         if inp_np.ndim == 3:
-            # shape => [Z, H, W]
-            inp_slice = inp_np[z_idx]
+            inp_slice = inp_np[z_idx]          # shape => [H, W]
         else:
-            # multi-channel input (rare), shape => [C, Z, H, W]
-            # pick out each channel or just show the 0th?
-            inp_slice = inp_np[:, z_idx, :, :]  # shape => [C, H, W]
+            inp_slice = inp_np[:, z_idx, :, :] # shape => [C, H, W]
         top_row_imgs.append(convert_slice_to_bgr(inp_slice))
 
-        # -- Each GT
+        # 2) Each GT
         for t_name in task_names:
             gt_slice = targets_np[t_name]
             if gt_slice.shape[0] == 1:
-                # shape => [1, Z, H, W] => [Z, H, W]
-                slice_2d = gt_slice[0, z_idx, :, :]
+                slice_2d = gt_slice[0, z_idx, :, :]  # shape => [H, W]
             else:
-                # shape => [3, Z, H, W] for normals, etc.
-                slice_2d = gt_slice[:, z_idx, :, :]
+                slice_2d = gt_slice[:, z_idx, :, :]  # shape => [3, H, W] or however
             top_row_imgs.append(convert_slice_to_bgr(slice_2d))
 
         top_row = np.hstack(top_row_imgs)
 
-        # Bottom row: predictions
+        # ----------------------------------------
+        # BOTTOM ROW: [blank tile] + [pred tasks]
+        # ----------------------------------------
         bottom_row_imgs = []
+
+        # 1) A blank tile that matches the input-slice shape
+        blank_tile = np.zeros_like(convert_slice_to_bgr(inp_slice))
+        bottom_row_imgs.append(blank_tile)
+
+        # 2) Predictions for each task
         for t_name in task_names:
             pd_slice = preds_np[t_name]
             if pd_slice.shape[0] == 1:
@@ -264,17 +256,15 @@ def save_debug_gif(
                 bgr_pred = convert_slice_to_bgr(slice_2d)
                 bottom_row_imgs.append(bgr_pred)
             else:
-                # normals
                 slice_3d = pd_slice[:, z_idx, :, :]
+                # Because we set show_normal_magnitude=False,
+                # this should return just one BGR panel
                 bgr_normals = convert_slice_to_bgr(slice_3d, show_magnitude=show_normal_magnitude)
                 bottom_row_imgs.append(bgr_normals)
 
-        if bottom_row_imgs:
-            bottom_row = np.hstack(bottom_row_imgs)
-        else:
-            # If no tasks exist, or something is empty
-            bottom_row = np.zeros_like(top_row, dtype=np.uint8)
+        bottom_row = np.hstack(bottom_row_imgs)
 
+        # Vertical stack -> final image for this slice
         final_img = np.vstack([top_row, bottom_row])
         frames.append(final_img)
 
@@ -283,6 +273,7 @@ def save_debug_gif(
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Epoch {epoch}] Saving GIF to: {save_path}")
     imageio.mimsave(save_path, frames, fps=fps)
+
 
 
 import os

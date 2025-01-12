@@ -191,8 +191,8 @@ class ZarrSegmentationDataset3D(Dataset):
 
             # illumination
             A.OneOf([
-                #A.RandomBrightnessContrast(),
-                A.AutoContrast(),
+                A.RandomBrightnessContrast(),
+                #A.AutoContrast(),
                 A.Illumination(),
             ], p=0.3),
 
@@ -214,7 +214,7 @@ class ZarrSegmentationDataset3D(Dataset):
         # dropout
         vol_transform = A.Compose([
                 A.CoarseDropout3D(fill=0.5,
-                                  num_holes_range=(1, 3),
+                                  num_holes_range=(1, 4),
                                   hole_depth_range=(0.1, 0.5),
                                   hole_height_range=(0.1, 0.5),
                                   hole_width_range=(0.1, 0.5))
@@ -232,8 +232,8 @@ class ZarrSegmentationDataset3D(Dataset):
 
         # i have to use different rotations/flips here because of normal vectors
         # this still applies if you do not have a key called normals, it just wont do the sign flipping/rotations
-        rotate = RandomRotate90WithNormals(axes=('z',), p_transform=0.25)
-        flip = RandomFlipWithNormals(p_transform=0.25)
+        rotate = RandomRotate90WithNormals(axes=('z',), p_transform=0.3)
+        flip = RandomFlipWithNormals(p_transform=0.3)
         data_dict = rotate(data_dict)
         data_dict = flip(data_dict)
 

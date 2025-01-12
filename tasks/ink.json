@@ -1,8 +1,8 @@
 {
     "tr_params":{
         "model_name": "ink",
-        "patch_size": [20, 192, 192],
-        "batch_size": 5,
+        "patch_size": [20, 256, 256],
+        "batch_size": 4,
         "tr_val_split": 0.90,
         "ignore_label": null,
         "loss_only_on_label": false,
@@ -10,29 +10,30 @@
         "label_smoothing": 0.2,
         "initial_lr": 0.001,
         "weight_decay": 0.0001,
-        "max_steps_per_epoch": 500,
+        "max_steps_per_epoch": 300,
         "max_val_steps_per_epoch": 25,
         "max_epoch": 500,
         "gradient_accumulation": 1,
         "load_weights_only": false,
-        "ckpt_out_base": "/home/sean/Documents/models/normals/checkpoints/ink",
+        "ckpt_out_base": "/mnt/raid_hdd/models/ink",
+        "checkpoint_path": "//mnt/raid_hdd/models/ink/ink_24.pth",
         "optimizer": "AdamW",
         "num_dataloader_workers": 12,
         "tensorboard_log_dir": "/home/sean/Desktop/tensorboard/ink"
     },
 
     "inference_params":{
-        "patch_size": [64, 192, 192],
-        "batch_size": 1,
-        "checkpoint_path": "/home/sean/Documents/models/normals/checkpoints/inkNorm_301.pth",
-        "num_dataloader_workers":4,
-        "input_path": "/mnt/raid_nvme/s1_cutout_outer.zarr",
+        "patch_size": [20, 256, 256],
+        "batch_size": 8,
+        "checkpoint_path": "/mnt/raid_hdd/models/ink/ink_148.pth",
+        "num_dataloader_workers":12,
+        "input_path": "/home/sean/Desktop/s1_segments/1619/.zarr/layers.zarr",
         "input_format": "zarr",
-        "output_dir": "/mnt/raid_nvme/inference_out",
+        "output_dir": "/home/sean/Desktop/s1_segments/1619/",
         "output_format": "zarr",
         "output_type": "np.uint8",
-        "output_targets": ["ink", "normals"],
-        "overlap": 0.5
+        "output_targets": ["ink"],
+        "overlap": 0.25
     },
 
     "model_config":{
@@ -44,7 +45,7 @@
         "min_labeled_ratio": 0.5,
         "min_bbox_percent": 0.95,
         "use_cache": true,
-        "cache_file": "/home/sean/Desktop/s1_segments/20_256_256_ink_cache.json",
+        "cache_file": "/home/sean/Desktop/s1_segments/20_256_256_ink_cache_new.json",
 
         "volume_paths": [
             {

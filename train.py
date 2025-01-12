@@ -256,13 +256,16 @@ class BaseTrainer:
                         per_task_losses[t_name] = t_loss.item()
 
                 # backward
+                # loss \ accumulation steps to maintain same effective batch size
+                total_loss = total_loss / grad_accumulate_n
+                # backward
                 scaler.scale(total_loss).backward()
-                if (i + 1) % grad_accumulate_n == 0 or (i + 1) == len(dataloader):
 
+                if (i + 1) % grad_accumulate_n == 0 or (i + 1) == len(dataloader):
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 3)
                     scaler.step(optimizer)
-                    optimizer.zero_grad(set_to_none=True)
                     scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
 
                 steps += 1
 
