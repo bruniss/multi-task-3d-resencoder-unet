@@ -1,3 +1,5 @@
+# huge amounts copied from wolny pytorch3dunet. https://github.com/wolny/pytorch-3dunet/tree/master
+
 from functools import partial
 
 import torch

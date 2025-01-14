@@ -18,6 +18,7 @@ class InferenceDataset(Dataset):
             patch_size=(128, 128, 128),
             input_format: str = 'zarr',
             overlap: float = 0.25,
+            load_all: bool = False
             ):
 
         self.input_path = input_path
@@ -26,9 +27,13 @@ class InferenceDataset(Dataset):
         self.patch_size = patch_size
         self.normalization = Standardize(channelwise=False)
         self.overlap = overlap
+        self.load_all = load_all
 
         if input_format == 'zarr':
             self.input_array = zarr.open(self.input_path, mode='r')
+
+        if load_all:
+            self.input_array = self.input_array[:]
 
         self.input_shape = self.input_array.shape
         self.input_dtype = self.input_array.dtype

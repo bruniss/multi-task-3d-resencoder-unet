@@ -6,6 +6,12 @@ from types import SimpleNamespace
 from tqdm import tqdm
 import numpy as np
 from pytorch3dunet.unet3d.model import MultiTaskResidualUNetSE3D
+from pytorch3dunet.unet3d.buildingblocks import (
+    nnUNetStyleResNetBlockSE,
+    ResNetBlockSE,
+    ResNetBlock,
+    DoubleConv
+)
 from pytorch3dunet.augment.transforms import Standardize
 
 import torch
@@ -16,7 +22,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataloading.dataset import ZarrSegmentationDataset3D
 from visualization.plotting import save_debug_gif,log_3d_slices_as_images, debug_dataloader_plot, export_data_dict_as_tif
-from losses.losses import masked_cosine_loss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss
+from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
+from losses.losses import masked_cosine_loss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
+
+from losses.get_loss import get_loss_fn
 
 
 class BaseTrainer:
@@ -58,8 +67,8 @@ class BaseTrainer:
         self.dilate_label = bool(getattr(tr_params, "dilate_label", False))
         self.loss_only_on_label = bool(getattr(tr_params, "loss_only_on_label", False))
         self.label_smoothing = float(getattr(tr_params, "label_smoothing", 0.2))
-        self.min_labeled_ratio = float(getattr(tr_params, "min_labeled_ratio", 0.1))
-        self.min_bbox_percent = float(getattr(tr_params, "min_bbox_percent", 0.95))
+        self.min_labeled_ratio = float(getattr(dataset_config, "min_labeled_ratio", 0.1))
+        self.min_bbox_percent = float(getattr(dataset_config, "min_bbox_percent", 0.95))
         self.use_cache = bool(getattr(dataset_config, "use_cache", True))
         self.cache_file = Path((getattr(dataset_config, "cache_file",'valid_patches.json')))
         self.max_steps_per_epoch = int(getattr(tr_params, "max_steps_per_epoch", 500))
@@ -109,6 +118,7 @@ class BaseTrainer:
             num_levels=self.num_levels
         )
 
+
         dataset = ZarrSegmentationDataset3D(
             volume_paths=self.volume_paths,
             tasks=self.tasks,
@@ -125,7 +135,7 @@ class BaseTrainer:
         if self.debug_dataloader:
             export_data_dict_as_tif(
                 dataset=dataset,
-                num_batches=10,
+                num_batches=25,
                 out_dir="my_debug_dir"  # directory for saving .png files
             )
             print("Debug dataloader plots generated; exiting training early.")
@@ -136,6 +146,16 @@ class BaseTrainer:
         model = model.to(device)
 
         # --- losses ---- #
+        LOSS_FN_MAP = {
+            "BCEDiceLoss": BCEDiceLoss,
+            "BCEWithLogitsLossLabelSmoothing": BCEWithLogitsLossLabelSmoothing,
+            "BCEWithLogitsLossZSmooth": BCEWithLogitsLossZSmooth,
+            "BCEWithLogitsLoss": BCEWithLogitsLoss,
+            "BCELoss": BCELoss,
+            "CrossEntropyLoss": CrossEntropyLoss,
+            "MSELoss": MSELoss,
+            "masked_cosine_loss": masked_cosine_loss,
+        }
 
         self.loss_fns = {}
         for task_name, task_info in self.tasks.items():
@@ -147,6 +167,8 @@ class BaseTrainer:
             else:
                 #self.loss_fns[task_name] = BCEWithLogitsLossLabelSmoothing(smoothing=self.label_smoothing)
                 self.loss_fns[task_name] = BCEDiceLoss(alpha=0.5, beta=0.5)
+                #self.loss_fns[task_name] = BCEWithLogitsLossZSmooth(center_smoothing=0.025, edge_smoothing=0.15,)
+
         if self.optimizer == "SGD":
             optimizer = SGD(
                 model.parameters(),
