@@ -78,13 +78,17 @@
                 "channels": 1,
                 "activation": "none",
                 "weight": 1,
-                "loss": "BCEDiceLoss"
+                "loss_fn": "BCEDiceLoss",
+                "loss_kwargs": {
+                    "alpha": 0.5,
+                    "beta": 0.5
+                }
             },
             "normals": {
                 "channels": 3,
                 "activation": "none",
                 "weight": 1,
-                "loss": "masked_cosine_loss"
+                "loss_fn": "masked_cosine_loss"
             }
     
         }
