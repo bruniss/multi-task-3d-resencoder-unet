@@ -150,13 +150,13 @@ def cut_zarr_bounding_box_chunked(
 if __name__ == "__main__":
     # Example usage
     input_zarr = "/mnt/raid_nvme/s1.zarr"
-    output_zarr = "/mnt/raid_nvme/s1_cutout.zarr"
+    output_zarr = "/mnt/raid_nvme/s1_6000_7000.zarr"
 
     cut_zarr_bounding_box_chunked(
         input_zarr_path=input_zarr,
         output_zarr_path=output_zarr,
-        z_start=10000, z_stop=12000,
-        y_start=2500,  y_stop=4500,
-        x_start=2500,  x_stop=4500,
-        n_workers=2
+        z_start=6000, z_stop=7000,
+        y_start=0,  y_stop=7888,
+        x_start=0,  x_stop=8096,
+        n_workers=16
     )

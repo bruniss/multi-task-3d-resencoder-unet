@@ -228,6 +228,78 @@ class BCEWithLogitsLossLabelSmoothing(nn.Module):
         loss = self.criterion(logits, smoothed_targets)
         return loss
 
+
+import torch
+import torch.nn as nn
+
+
+class BCEWithLogitsLossZSmooth(nn.Module):
+    """
+    Extends BCEWithLogitsLoss by applying slice-dependent label smoothing along the Z dimension.
+    Smoothing factor grows linearly the further we are from the center Z slice.
+    """
+
+    def __init__(
+            self,
+            center_smoothing=0.1,
+            edge_smoothing=0.4,
+            reduction='mean'
+    ):
+        """
+        :param center_smoothing: smoothing factor used at the center slice (z = mid_z)
+        :param edge_smoothing: smoothing factor at the furthest slice(s) from the center
+        :param reduction: reduction mode for the underlying BCEWithLogitsLoss
+        """
+        super().__init__()
+        self.center_smoothing = center_smoothing
+        self.edge_smoothing = edge_smoothing
+        self.reduction = reduction
+        self.criterion = nn.BCEWithLogitsLoss(reduction=reduction)
+
+    def forward(self, logits, targets):
+        """
+        :param logits: model outputs of shape [B, C, D, H, W]
+        :param targets: ground truth in {0,1} of shape [B, C, D, H, W]
+        :return: scalar loss (if reduction='mean' or 'sum'), or per-element (if reduction='none')
+        """
+        # logits and targets should match in shape. We assume:
+        # B = batch, C = channel, D = depth, H = height, W = width
+        assert logits.shape == targets.shape, "Logits and targets must match in shape."
+
+        B, C, D, H, W = logits.shape
+
+        # 1) Compute the per-slice distance from the center in [0 .. D//2].
+        #    mid_z can be float, so distanceFromCenter is also float.
+        mid_z = (D - 1) / 2.0
+        z_range = torch.arange(D, device=logits.device, dtype=logits.dtype)
+        distanceFromCenter = torch.abs(z_range - mid_z)  # shape (D,)
+
+        # 2) Map distance [0 .. D/2] to [center_smoothing .. edge_smoothing].
+        #    The maximum distance from the center is roughly D//2.
+        max_dist = D // 2  # integer
+        smoothing_range = self.edge_smoothing - self.center_smoothing
+        # distance ratio in [0..1]
+        dist_ratio = distanceFromCenter / max_dist
+        # slice-wise smoothing in [center_smoothing .. edge_smoothing]
+        slice_smoothing = self.center_smoothing + smoothing_range * dist_ratio  # shape (D,)
+
+        # 3) Broadcast slice_smoothing to shape [1, 1, D, 1, 1].
+        #    Then it will broadcast automatically to [B, C, D, H, W].
+        slice_smoothing = slice_smoothing.view(1, 1, D, 1, 1)
+
+        # 4) Apply label smoothing:
+        #    smoothed = y*(1 - 2*alpha) + alpha, where alpha = slice_smoothing at that z-slice
+        #    Because each voxel is either 0 or 1, this translates to:
+        #      if y=1, smoothed=1 - alpha
+        #      if y=0, smoothed=alpha
+        #    Here we do it in a single expression:
+        smoothed_targets = targets * (1.0 - 2.0 * slice_smoothing) + slice_smoothing
+
+        # 5) Compute the BCEWithLogitsLoss using the smoothed targets
+        loss = self.criterion(logits, smoothed_targets)
+        return loss
+
+
 class BCEDiceLoss(nn.Module):
     """Linear combination of BCE and Dice losses"""
 

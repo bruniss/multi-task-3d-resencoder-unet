@@ -191,22 +191,23 @@ class ZarrSegmentationDataset3D(Dataset):
 
             # illumination
             A.OneOf([
-                A.RandomBrightnessContrast(),
-                #A.AutoContrast(),
-                A.Illumination(),
+                #A.RandomBrightnessContrast(),
+                #A.Illumination(),
             ], p=0.3),
 
             # noise
             A.OneOf([
-                A.MultiplicativeNoise(),
+                #A.MultiplicativeNoise(),
                 A.GaussNoise()
-            ], p=0.3),
+            ], p=0.35),
 
             # blur
             A.OneOf([
-                A.Blur(),
-                A.Downscale()
-            ], p=0.3),
+                A.MotionBlur(),
+                A.Defocus(),
+                A.Downscale(),
+                A.AdvancedBlur()
+            ], p=0.4),
         ],
             p=1.0,
         )
@@ -215,9 +216,9 @@ class ZarrSegmentationDataset3D(Dataset):
         vol_transform = A.Compose([
                 A.CoarseDropout3D(fill=0.5,
                                   num_holes_range=(1, 4),
-                                  hole_depth_range=(0.1, 0.5),
-                                  hole_height_range=(0.1, 0.5),
-                                  hole_width_range=(0.1, 0.5))
+                                  hole_depth_range=(0.1, 0.4),
+                                  hole_height_range=(0.1, 0.4),
+                                  hole_width_range=(0.1, 0.4))
         ],
             p=0.5
         )
@@ -232,16 +233,20 @@ class ZarrSegmentationDataset3D(Dataset):
 
         # i have to use different rotations/flips here because of normal vectors
         # this still applies if you do not have a key called normals, it just wont do the sign flipping/rotations
-        rotate = RandomRotate90WithNormals(axes=('z',), p_transform=0.3)
-        flip = RandomFlipWithNormals(p_transform=0.3)
-        data_dict = rotate(data_dict)
-        data_dict = flip(data_dict)
+        #rotate = RandomRotate90WithNormals(axes=('z',), p_transform=0.3)
+        #flip = RandomFlipWithNormals(p_transform=0.3)
+        #data_dict = rotate(data_dict)
+        #data_dict = flip(data_dict)
 
-        #if "normals" not in data_dict and "normal" not in data_dict:
-            #v_transform = vCompose([
-              #ElasticTransform(p=1.0)
-            #], p=0.15)
-            #data_dict = v_transform(data_dict)
+        if "normals" not in data_dict and "normal" not in data_dict:
+
+            vol_input = {}
+            vol_input["image"] = data_dict["image"]
+
+            v_transform = vCompose([
+              ElasticTransform(p=1.0)
+            ], p=0.15)
+
 
         # convert image to tensors, adding an additional channel for single channel input data
         # input -> [C, D, H, W]

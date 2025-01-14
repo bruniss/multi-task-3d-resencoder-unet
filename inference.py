@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import zarr
 from numcodecs import Blosc
+import cv2
 
 import torch
 from torch.utils.data import DataLoader
@@ -16,7 +17,7 @@ from dataloading.inference_dataset import InferenceDataset
 
 class ZarrInferenceHandler:
 
-    def __init__(self, config_file: str):
+    def __init__(self, config_file: str, write_layers:bool):
         with open(config_file, "r") as f:
             config = json.load(f)
 
@@ -38,15 +39,17 @@ class ZarrInferenceHandler:
         self.input_path = str(getattr(inference_params, "input_path", None))
         self.input_format = str(getattr(inference_params, "input_format", "zarr"))
         self.output_format = str(getattr(inference_params, "output_format", "zarr"))
+        self.load_all = bool(getattr(inference_params, "load_all", False))
         self.output_dtype= str(getattr(inference_params, "output_type", "np.uint8"))
         self.output_targets = list(getattr(inference_params, "output_targets", "all"))
         self.overlap = float(getattr(inference_params, "overlap", 0.25))
+        self.targets = getattr(inference_params, "targets", {})
 
 
         self.output_dir = str(getattr(inference_params, "output_dir", "./"))
-
+        self.write_layers = write_layers
         self.volume_paths = dataset_config.volume_paths
-        self.targets = dataset_config.targets
+        self.inference_targets = inference_params.targets
 
 
         os.makedirs(self.output_dir, exist_ok=True)
@@ -55,7 +58,7 @@ class ZarrInferenceHandler:
         torch.set_float32_matmul_precision('high')
         model = MultiTaskResidualUNetSE3D(
             in_channels=1,
-            tasks=self.targets,
+            tasks=self.inference_targets,
             f_maps=self.f_maps,
             num_levels=self.num_levels
         )
@@ -72,14 +75,15 @@ class ZarrInferenceHandler:
             patch_size= self.patch_size,
             normalization= self.normalization,
             input_format= self.input_format,
-            overlap = self.overlap
+            overlap = self.overlap,
+            load_all = self.load_all
             )
 
         loader = DataLoader(dataset,
                             batch_size=self.batch_size,
                             shuffle=False,
                             num_workers=self.num_dataloader_workers,
-                            prefetch_factor=2,
+                            prefetch_factor=4,
                             pin_memory=True,
                             persistent_workers=True,)
 
@@ -138,7 +142,24 @@ class ZarrInferenceHandler:
             # ---- first pass , raw data => float32 preds ---- #
             for batch_idx, data in tqdm(enumerate(loader), total=len(loader), desc="Running inference on patches..."):
                 patches = data["image"].to(device)  # (batch, in_channels, z, y, x)
-                outputs = model(patches)  # dict: { "sheet": (batch, 1, z, y, x), "normals": (batch, 3, z, y, x), ...etc }
+
+                raw_outputs = model(patches)
+                outputs = {}
+                for t_name in self.output_targets:
+                    # e.g. t_name = "ink"
+                    t_conf = self.inference_targets[t_name]  # e.g. {"channels":1, "activation":"sigmoid", ...}
+                    activation_str = t_conf.get("activation", "none").lower()
+
+                    if activation_str == "sigmoid":
+                        outputs[t_name] = torch.sigmoid(raw_outputs[t_name])
+                    elif activation_str == "softmax":
+                        outputs[t_name] = torch.softmax(raw_outputs[t_name], dim=1)
+                    elif activation_str == "none":
+                        # no activation
+                        outputs[t_name] = raw_outputs[t_name]
+                    else:
+                        # fallback to no activation
+                        outputs[t_name] = raw_outputs[t_name]
 
                 for i_in_batch in range(patches.size(0)):
                     global_idx = batch_idx * self.batch_size + i_in_batch
@@ -292,21 +313,38 @@ class ZarrInferenceHandler:
                             np.clip(int_block, 0, 255, out=int_block)
                             int_block = int_block.astype(np.uint8)
 
-                        # 3) Write the scaled integer block back out
+                        # write the scaled uint8 block back out
                         final_ds[..., z0:z1, y0:y1, x0:x1] = int_block
 
 
-        # remove the float32 sum arrays
-        #for tgt_name in self.output_targets:
-        #    sum_name = f"{tgt_name}_sum"
-        #    del zarr_store[sum_name]
+        if self.write_layers:
+            slices_dir = os.path.join(self.output_dir, "z_slices")
+            os.makedirs(slices_dir, exist_ok=True)
 
+            for tgt_name in self.output_targets:
+                target_dir = os.path.join(slices_dir, tgt_name)
+                os.makedirs(target_dir, exist_ok=True)
 
+                final_ds = zarr_store[f"{tgt_name}_final"]
+                if len(final_ds.shape) == 4:
+                    for z in tqdm(range(final_ds.shape[1]), desc=f"Writing {tgt_name} z-slices"):
+                        slice_data = final_ds[:, z, :, :]
+                        slice_data = slice_data.astype(np.uint8)
+                        slice_path = os.path.join(target_dir, f"{z}.jpg")
+                        cv2.imwrite(slice_path, slice_data)
+                else:
+                    for z in tqdm(range(final_ds.shape[0]), desc=f"Writing {tgt_name} z-slices"):
+                        slice_data = final_ds[z, :, :]
+                        slice_data = slice_data.astype(np.uint8)
+                        slice_path = os.path.join(target_dir, f"{z}.jpg")
+                        cv2.imwrite(slice_path, slice_data)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inference script for MultiTaskResidualUNetSE3D.")
     parser.add_argument("--config_path", type=str, required=True, help="Path to your config file. Use the same one you used for training!")
+    parser.add_argument("--write_layers", action="store_true", help="Write the sliced z layers to disk")
+
     args = parser.parse_args()
 
-    inference_handler = ZarrInferenceHandler(config_file=args.config_path)
+    inference_handler = ZarrInferenceHandler(config_file=args.config_path, write_layers=args.write_layers)
     inference_handler.infer()

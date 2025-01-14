@@ -1,3 +1,5 @@
+# huge amounts copied from wolny pytorch3dunet. https://github.com/wolny/pytorch-3dunet/tree/master
+
 import torch.nn as nn
 
 from pytorch3dunet.unet3d.buildingblocks import DoubleConv, ResNetBlock, ResNetBlockSE, \

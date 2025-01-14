@@ -15,8 +15,8 @@
         "max_epoch": 500,
         "gradient_accumulation": 1,
         "load_weights_only": false,
-        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/augs_s4_reset/SheetNorm_18.pth",
-        "ckpt_out_base": "/mnt/raid_hdd/models/normals/checkpoints/augs_s4_reset",
+        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/nofliprotate/SheetNorm_388.pth",
+        "ckpt_out_base": "/mnt/raid_hdd/models/normals/checkpoints/nofliprotate",
         "optimizer": "AdamW",
         "num_dataloader_workers": 4,
         "tensorboard_log_dir": "/home/sean/Desktop/tensorboard"
@@ -24,21 +24,31 @@
 
     "inference_params":{
         "patch_size": [64, 192, 192],
-        "batch_size": 6,
-        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/SheetNorm_301.pth",
-        "num_dataloader_workers":16,
-        "input_path": "/mnt/raid_nvme/s1_cutout_outer.zarr",
+        "batch_size": 7,
+        "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/nofliprotate/SheetNorm_388.pth",
+        "num_dataloader_workers":8,
+        "input_path": "/mnt/raid_nvme/s1_6000_7000.zarr",
         "input_format": "zarr",
-        "output_dir": "/mnt/raid_nvme/inference_out",
+        "output_dir": "/mnt/raid_nvme/inference_out/6000_7000",
         "output_format": "zarr",
         "output_type": "np.uint8",
         "output_targets": ["sheet", "normals"],
-        "overlap": 0.25
+        "overlap": 0,
+        "targets": {
+            "sheet": {
+                "channels": 1,
+                "activation": "sigmoid"
+            },
+            "normals": {
+                "channels": 3,
+                "activation": "sigmoid"
+            }
+        }
     },
 
     "model_config":{
         "f_maps": [32, 64, 128, 256, 320, 528],
-        "num_levels": 6
+        "n_levels": 6
     },
   
     "dataset_config":{
@@ -67,12 +77,14 @@
             "sheet": {
                 "channels": 1,
                 "activation": "none",
-                "weight": 1
+                "weight": 1,
+                "loss": "BCEDiceLoss"
             },
             "normals": {
                 "channels": 3,
                 "activation": "none",
-                "weight": 1
+                "weight": 1,
+                "loss": "masked_cosine_loss"
             }
     
         }

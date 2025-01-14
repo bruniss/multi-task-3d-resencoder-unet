@@ -1,8 +1,8 @@
 {
     "tr_params":{
         "model_name": "ink",
-        "patch_size": [20, 256, 256],
-        "batch_size": 4,
+        "patch_size": [14, 256, 256],
+        "batch_size": 2,
         "tr_val_split": 0.90,
         "ignore_label": null,
         "loss_only_on_label": false,
@@ -16,56 +16,85 @@
         "gradient_accumulation": 1,
         "load_weights_only": false,
         "ckpt_out_base": "/mnt/raid_hdd/models/ink",
-        "checkpoint_path": "//mnt/raid_hdd/models/ink/ink_24.pth",
+        "checkpoint_path": "/mnt/raid_hdd/models/ink/ink_157.pth",
         "optimizer": "AdamW",
         "num_dataloader_workers": 12,
         "tensorboard_log_dir": "/home/sean/Desktop/tensorboard/ink"
     },
 
     "inference_params":{
-        "patch_size": [20, 256, 256],
+        "patch_size": [14, 256, 256],
         "batch_size": 8,
-        "checkpoint_path": "/mnt/raid_hdd/models/ink/ink_148.pth",
+        "checkpoint_path": "/mnt/raid_hdd/models/ink/ink_352.pth",
         "num_dataloader_workers":12,
-        "input_path": "/home/sean/Desktop/s1_segments/1619/.zarr/layers.zarr",
+        "input_path": "/home/sean/Desktop/s5_segments/20241030152031.zarr/layers.zarr",
         "input_format": "zarr",
-        "output_dir": "/home/sean/Desktop/s1_segments/1619/",
+        "output_dir": "/home/sean/Desktop/s5_segments/20241030152031",
         "output_format": "zarr",
         "output_type": "np.uint8",
         "output_targets": ["ink"],
-        "overlap": 0.25
+        "load_all": true,
+        "overlap": 0.1,
+        "targets": {
+            "ink": {
+                "channels": 1,
+                "activation": "sigmoid",
+                "weight": 1
+            }
+        }
     },
 
     "model_config":{
-        "f_maps": [64, 128, 256, 512, 1024],
-        "num_levels": 5
+        "f_maps": [128, 256, 512, 1024],
+        "n_levels": 4,
+        "basic_module": "nnUNetStyleResNetBlockSE"
     },
 
     "dataset_config":{
-        "min_labeled_ratio": 0.5,
-        "min_bbox_percent": 0.95,
+        "min_labeled_ratio": 0.20,
+        "min_bbox_percent": 0.20,
         "use_cache": true,
-        "cache_file": "/home/sean/Desktop/s1_segments/20_256_256_ink_cache_new.json",
+        "cache_file": "/home/sean/Desktop/s1_segments/14_256_256_inkcache.json",
 
         "volume_paths": [
             {
-                "input": "/home/sean/Desktop/s1_segments/5753/layers.zarr",
-                "ink": "/home/sean/Desktop/s1_segments/5753/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/0901.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/0901.zarr/inklabels.zarr",
                 "ref_label": "ink"
             },
             {
-                "input": "/home/sean/Desktop/s1_segments/0901/layers.zarr",
-                "ink": "/home/sean/Desktop/s1_segments/0901/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/0926.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/0926.zarr/inklabels.zarr",
                 "ref_label": "ink"
             },
             {
-                "input": "/home/sean/Desktop/s1_segments/4423/layers.zarr",
-                "ink": "/home/sean/Desktop/s1_segments/4423/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/1321.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/1321.zarr/inklabels.zarr",
                 "ref_label": "ink"
             },
             {
-                "input": "/home/sean/Desktop/s1_segments/1321/layers.zarr",
-                "ink": "/home/sean/Desktop/s1_segments/1321/inklabels.zarr",
+                "input": "/home/sean/Desktop/s1_segments/1619.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/1619.zarr/inklabels.zarr",
+                "ref_label": "ink"
+            },
+            {
+                "input": "/home/sean/Desktop/s1_segments/3336.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/3336.zarr/inklabels.zarr",
+                "ref_label": "ink"
+            },
+            {
+                "input": "/home/sean/Desktop/s1_segments/4423.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/4423.zarr/inklabels.zarr",
+                "ref_label": "ink"
+            },
+            {
+                "input": "/home/sean/Desktop/s1_segments/5753.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/5753.zarr/inklabels.zarr",
+                "ref_label": "ink"
+            },
+            {
+                "input": "/home/sean/Desktop/s1_segments/51002.zarr/layers.zarr",
+                "ink": "/home/sean/Desktop/s1_segments/51002.zarr/inklabels.zarr",
                 "ref_label": "ink"
             }
         ],
