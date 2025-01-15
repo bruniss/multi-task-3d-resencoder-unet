@@ -29,7 +29,7 @@ most of these fields are optional. this is an example yaml file
 tr_params:
   model_name: ink             # required [str] this is the name your model will checkpoint will be saved as
   vram_max: 22000             # required if autoconfigure is true, else optional-- the amount in MB you want the model to use
-  autoconfigure: false         # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
+  autoconfigure: false        # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
   patch_size: [14, 128, 128]  # optional [list] patch size for training
   batch_size: 12              # optional [int] batch size for training
   tr_val_split: 0.90          # optional[float] the percentage of your total dataset used for training, with the other part being used for val
@@ -48,8 +48,6 @@ tr_params:
   optimizer: "AdamW" # optional, AdamW [str] the optimizer to use during training. currently only AdamW and SGD are provided.
   num_dataloader_workers: 12 # optional, 4 [int]
   tensorboard_log_dir: "/home/sean/Desktop/tensorboard/ink" # [str] the path the tensorboard logs will be stored to
-
-
 
 model_config:
 
