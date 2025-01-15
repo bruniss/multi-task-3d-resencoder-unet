@@ -1,0 +1,74 @@
+tr_params:
+  model_name: SheetNorm
+  patch_size: [64, 192, 192]
+  batch_size: 4
+  tr_val_split: 0.80
+  ignore_label: null
+  loss_only_on_label: false
+  dilate_label: false
+  label_smoothing: 0.1
+  initial_lr: 0.001
+  weight_decay: 0.0001
+  max_steps_per_epoch: 500
+  max_val_steps_per_epoch: 25
+  max_epoch: 500
+  gradient_accumulation: 1
+  load_weights_only: false
+  checkpoint_path: /mnt/raid_hdd/models/normals/checkpoints/nofliprotate/SheetNorm_388.pth
+  ckpt_out_base: /mnt/raid_hdd/models/normals/checkpoints/nofliprotate
+  optimizer: AdamW
+  num_dataloader_workers: 4
+  tensorboard_log_dir: /home/sean/Desktop/tensorboard
+
+inference_params:
+  patch_size: [64, 192, 192]
+  batch_size: 7
+  checkpoint_path: /mnt/raid_hdd/models/normals/checkpoints/nofliprotate/SheetNorm_388.pth
+  num_dataloader_workers: 8
+  input_path: /mnt/raid_nvme/s1_10000_10064.zarr
+  input_format: zarr
+  output_dir: /mnt/raid_nvme/inference_out/10000_10064
+  output_format: zarr
+  output_type: np.uint8
+  output_targets: [sheet, normals]
+  overlap: .30
+  targets:
+    sheet:
+      channels: 1
+      activation: sigmoid
+    normals:
+      channels: 3
+      activation: none
+
+model_config:
+  f_maps: [32, 64, 128, 256, 320, 528]
+  n_levels: 6
+
+dataset_config:
+  min_labeled_ratio: 0.07
+  min_bbox_percent: 0.95
+  use_cache: true
+  cache_file: /home/sean/Documents/GitHub/VC-Surface-Models/models/64_192_192_patch_cache_ands4.json
+  volume_paths:
+    - input: /mnt/raid_nvme/s1.zarr
+      sheet: /mnt/raid_nvme/datasets/1-voxel-sheet_slices-closed.zarr/0.zarr
+      normals: /home/sean/Documents/GitHub/VC-Surface-Models/models/normals.zarr
+      ref_label: sheet
+    - input: /mnt/raid_nvme/s4.zarr
+      sheet: /home/sean/Documents/GitHub/VC-Surface-Models/models/normals/s4_sheet.zarr/volume.zarr
+      normals: /home/sean/Documents/GitHub/VC-Surface-Models/models/normals/s4_normals.zarr/volume.zarr
+      ref_label: sheet
+  targets:
+    sheet:
+      channels: 1
+      activation: none
+      weight: 1
+      loss_fn: BCEDiceLoss
+      loss_kwargs:
+        alpha: 0.5
+        beta: 0.5
+    normals:
+      channels: 3
+      activation: none
+      weight: 1
+      loss_fn: MaskedCosineLoss

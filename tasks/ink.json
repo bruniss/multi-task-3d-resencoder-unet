@@ -27,7 +27,7 @@
         "batch_size": 8,
         "checkpoint_path": "/mnt/raid_hdd/models/ink/ink_352.pth",
         "num_dataloader_workers":12,
-        "input_path": "/home/sean/Desktop/s5_segments/20241030152031.zarr/layers.zarr",
+        "input_path": "/home/sean/Desktop/s1_segments/3852/3852.zarr/layers.zarr",
         "input_format": "zarr",
         "output_dir": "/home/sean/Desktop/s5_segments/20241030152031",
         "output_format": "zarr",

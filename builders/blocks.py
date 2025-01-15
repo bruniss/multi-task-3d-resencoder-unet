@@ -254,7 +254,7 @@ class nnUNetStyleResNetBlockSE(ResNetBlockSE):
     Customized ResNetBlockSE to match the nnUNet architecture
     """
     def __init__(self, in_channels, out_channels, kernel_size=3, order='cr',
-                 num_groups=8, stride=1, dilation=2, **kwargs):
+                 num_groups=8, stride=1, dilation=1, **kwargs):
         super().__init__(in_channels, out_channels, kernel_size, order,
                         num_groups, stride, dilation)
         # Override normalization to use InstanceNorm3d

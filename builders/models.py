@@ -259,114 +259,161 @@ class ResidualUNet2D(AbstractUNet):
                                              is3d=False)
 
 
+def get_activation_module(activation_str: str):
+    if activation_str.lower() == "none":
+        return None
+    elif activation_str.lower() == "sigmoid":
+        return nn.Sigmoid()
+    elif activation_str.lower() == "softmax":
+        return nn.Softmax(dim=1)
+    else:
+        return None
 
-class MultiTaskResidualUNetSE3D(ResidualUNetSE3D):
-    """
-    A U-Net style architecture with a shared encoder and multiple decoders,
-    one for each task in a dictionary of tasks.
-    """
 
-    def __init__(self,
-                in_channels: int,
-                tasks: dict, # example: tasks = {"sheet": 1, "normals": 3, "affinities": 6}
-                f_maps=[32, 64, 128, 256, 320, 320, 320],
-                layer_order='gcr',
-                num_groups=8,
-                num_levels=7,
-                conv_padding=1,
-                conv_upscale=2,
-                upsample='default',
-                dropout_prob=0.1
+class MultiTaskConfigurable3dUNet(nn.Module):
+
+    def __init__(
+            self,
+            in_channels: int,
+            tasks: dict,  # e.g. {"sheet": {"channels": 1, "activation": "sigmoid"}, ...}
+            f_maps=[32, 64, 128, 256, 512],
+            num_levels=5,
+            basic_module=ResNetBlockSE,
+            conv_kernel_size=3,
+            conv_padding=1,
+            conv_upscale=2,
+            dropout_prob=0.1,
+            layer_order='gcr',
+            num_groups=8,
+            pool_kernel_size=2,
+            upsample='default',
+            is3d=True,
+            **kwargs
     ):
-        """
-        Args:
-            in_channels (int): Number of input channels (e.g. 1 for grayscale).
-            tasks (dict): Dictionary of {task_name: out_channels} for each task.
-            final_sigmoid (bool): If True, apply sigmoid to the 'sheet' and 'affinities' tasks (or similarly).
-            ...
-        """
 
-        # Initialize the parent (which constructs the shared encoder)
-        # We pass out_channels=1 as a dummy, since we won't use the parent's
-        # final conv. We'll have our own final conv for each task.
-        super().__init__(
-            in_channels=in_channels,
-            out_channels=1,  # dummy
-            final_sigmoid=False,  # we won't use the parent's final sigmoid
-            f_maps=f_maps,
-            layer_order=layer_order,
-            num_groups=num_groups,
-            num_levels=num_levels,
-            is_segmentation=True,
-            conv_padding=conv_padding,
-            conv_upscale=conv_upscale,
-            upsample=upsample,
-            dropout_prob=dropout_prob,
-        )
+        super().__init__()
 
+        self.in_channels = in_channels
         self.tasks = tasks
         self.f_maps = f_maps
+        self.num_levels = num_levels
+        self.basic_module = basic_module
+        self.conv_kernel_size = conv_kernel_size
+        self.conv_padding = conv_padding
+        self.conv_upscale = conv_upscale
+        self.dropout_prob = dropout_prob
+        self.layer_order = layer_order
+        self.num_groups = num_groups
+        self.pool_kernel_size = pool_kernel_size
+        self.upsample = upsample
+        self.is3d = is3d
+        self.extra_kwargs = kwargs
 
-        # These ModuleDicts will store decoders and final_convs for each task
+        if isinstance(f_maps, int):
+                f_maps = number_of_features_per_level(f_maps, num_levels=num_levels)
+
+        # create encoders
+        self.encoders = create_encoders(
+            in_channels=in_channels,
+            f_maps=f_maps,
+            basic_module=basic_module,
+            conv_kernel_size=conv_kernel_size,
+            conv_padding=conv_padding,
+            conv_upscale=conv_upscale,
+            dropout_prob=dropout_prob,
+            layer_order=layer_order,
+            num_groups=num_groups,
+            pool_kernel_size=pool_kernel_size,
+            is3d=is3d
+        )
+
+        # We'll store the final "deepest features" so we remember how many channels
+        self.deepest_channels = f_maps[-1]
+
+        # skip connections" for every level except the last
+        # so that the "deepest" is separate from skip-level features.
+
+        # for each task, create a separate decoder + final conv
+        self.tasks = tasks
         self.task_decoders = nn.ModuleDict()
         self.task_final_convs = nn.ModuleDict()
         self.task_activations = nn.ModuleDict()
 
-        # For each task, create a decoder path and final conv
-        for task_name, task_info in self.tasks.items():
+        for task_name, task_info in tasks.items():
             out_channels = task_info["channels"]
-            activation_str = task_info.get("activation", "none")  # default is 'sigmoid' if not specified
+            activation_str = task_info.get("activation", "none")
 
-            # Create the decoder path for this task
+            # create a new decoder path for each task
             self.task_decoders[task_name] = create_decoders(
-                f_maps=self.f_maps,
-                basic_module=ResNetBlockSE,
-                conv_kernel_size=3,
+                f_maps=f_maps,
+                basic_module=basic_module,
+                conv_kernel_size=conv_kernel_size,
                 conv_padding=conv_padding,
                 layer_order=layer_order,
                 num_groups=num_groups,
                 upsample=upsample,
                 dropout_prob=dropout_prob,
-                is3d=True
+                is3d=is3d
             )
 
-            # Create the final 1x1 conv
-            self.task_final_convs[task_name] = nn.Conv3d(self.f_maps[0], out_channels, kernel_size=1)
+            # Create the final 1x1 conv for this task
+            self.task_final_convs[task_name] = nn.Conv3d(
+                in_channels=f_maps[0],
+                out_channels=out_channels,
+                kernel_size=1
+            )
 
-            activation_module = get_activation_module(activation_str)
-            self.task_activations[task_name] = activation_module
+            # activation
+            self.task_activations[task_name] = get_activation_module(activation_str)
+
+    def print_config(self):
+        print("MultiTaskConfigurable3dUNet configuration:")
+        print(f"  in_channels: {self.in_channels}")
+        print(f"  tasks: {self.tasks}")
+        print(f"  f_maps: {self.f_maps}")
+        print(f"  num_levels: {self.num_levels}")
+        print(f"  basic_module: {self.basic_module}")
+        print(f"  conv_kernel_size: {self.conv_kernel_size}")
+        print(f"  conv_padding: {self.conv_padding}")
+        print(f"  conv_upscale: {self.conv_upscale}")
+        print(f"  dropout_prob: {self.dropout_prob}")
+        print(f"  layer_order: {self.layer_order}")
+        print(f"  num_groups: {self.num_groups}")
+        print(f"  pool_kernel_size: {self.pool_kernel_size}")
+        print(f"  upsample: {self.upsample}")
+        print(f"  is3d: {self.is3d}")
+        print(f"  extra_kwargs: {self.extra_kwargs}")
 
     def forward(self, x):
-        # Shared encoder
+        # === Shared encoder ===
         encoders_features = []
         for encoder in self.encoders:
             x = encoder(x)
             encoders_features.insert(0, x)
+        # Remove the deepest features from skip connections:
+        # encoders_features[0] is the output of the last encoder block
+        x = encoders_features[0]
+        skip_features = encoders_features[1:]  # the rest are skip features
 
-        # Remove the deepest features from skip connections
-        encoders_features = encoders_features[1:]
-
-        # Dictionary of outputs
+        # === Task-specific decoders + final convs ===
         results = {}
-
-        # For each task, run the decoder + final conv + activation
-        for task_name, decoder_path in self.task_decoders.items():
-            task_x = x  # deepest features from encoder
-            # decode with skip connections
-            for decoder, skip_features in zip(decoder_path, encoders_features):
-                task_x = decoder(skip_features, task_x)
+        for task_name, decoder in self.task_decoders.items():
+            # Start from the deepest features
+            task_x = x
+            for dec, skip in zip(decoder, skip_features):
+                task_x = dec(skip, task_x)
 
             # final 1×1 conv
             task_x = self.task_final_convs[task_name](task_x)
 
-            # apply activation only if not None
-            if self.task_activations[task_name] is not None:
-                task_x = self.task_activations[task_name](task_x)
+            # optional activation
+            activation_fn = self.task_activations[task_name]
+            if activation_fn is not None and not self.training:
+                task_x = activation_fn(task_x)
 
             results[task_name] = task_x
 
         return results
-
 
 def get_model(model_config):
     model_class = get_class(model_config['name'], modules=[

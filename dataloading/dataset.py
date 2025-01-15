@@ -123,27 +123,26 @@ class ZarrSegmentationDataset3D(Dataset):
 
         # get the correct volume
         vol_dict = self.volumes[vol_idx]
-        # convert image data to float32, note that it still retains the original values
-        input_data = vol_dict["input"][patch_slice].astype(np.float32)
 
-        # input data here should be shape (z, y, x) or (c, z, y, x)
-        # and dtype of float32, with original pixel values
+        # scaling for uint8
+        input_data = vol_dict["input"][patch_slice]
+        og_input_dtype = input_data.dtype
+        input_data = input_data.astype(np.float32)
 
-        # scaling input values from 255 or 65000 to 0 to 1
-        # scaling input data for uint8
-        if input_data.dtype == np.uint8:
+        if og_input_dtype == np.uint8:
             input_data /= 255.0
 
         # scaling input data for uint16
-        elif input_data.dtype == np.uint16:
+        elif og_input_dtype == np.uint16:
             input_data /= 65535.0
+
+        # apply z-score normalization to the _input data only_
+        #input_data = self.normalization(input_data)
+
 
         # input data is still in the same shape (z, y, x) or (c, z, y, x)
         # input data here is float32
         # all values are now properly scaled between 0 and 1
-
-        # apply z-score normalization to the _input data only_
-        input_data = self.normalization(input_data)
 
         # enumerate through our target dictionary and gather the patches
         data_dict = {"image": input_data}
@@ -191,13 +190,13 @@ class ZarrSegmentationDataset3D(Dataset):
 
             # illumination
             A.OneOf([
-                #A.RandomBrightnessContrast(),
+                A.RandomBrightnessContrast(),
                 #A.Illumination(),
             ], p=0.3),
 
             # noise
             A.OneOf([
-                #A.MultiplicativeNoise(),
+                A.MultiplicativeNoise(),
                 A.GaussNoise()
             ], p=0.35),
 

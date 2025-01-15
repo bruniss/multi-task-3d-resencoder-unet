@@ -27,9 +27,9 @@
         "batch_size": 7,
         "checkpoint_path": "/mnt/raid_hdd/models/normals/checkpoints/nofliprotate/SheetNorm_388.pth",
         "num_dataloader_workers":8,
-        "input_path": "/mnt/raid_nvme/s1_6000_7000.zarr",
+        "input_path": "/mnt/raid_nvme/s1_10000_10500.zarr",
         "input_format": "zarr",
-        "output_dir": "/mnt/raid_nvme/inference_out/6000_7000",
+        "output_dir": "/mnt/raid_nvme/inference_out/10000_105000",
         "output_format": "zarr",
         "output_type": "np.uint8",
         "output_targets": ["sheet", "normals"],
@@ -41,7 +41,7 @@
             },
             "normals": {
                 "channels": 3,
-                "activation": "sigmoid"
+                "activation": "none"
             }
         }
     },
@@ -88,7 +88,7 @@
                 "channels": 3,
                 "activation": "none",
                 "weight": 1,
-                "loss_fn": "masked_cosine_loss"
+                "loss_fn": "MaskedCosineLoss"
             }
     
         }

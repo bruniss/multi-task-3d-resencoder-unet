@@ -1,17 +1,11 @@
 import os
 from pathlib import Path
-import json
+import yaml
 from types import SimpleNamespace
 
 from tqdm import tqdm
 import numpy as np
-from pytorch3dunet.unet3d.model import MultiTaskResidualUNetSE3D
-from pytorch3dunet.unet3d.buildingblocks import (
-    nnUNetStyleResNetBlockSE,
-    ResNetBlockSE,
-    ResNetBlock,
-    DoubleConv
-)
+from builders.models import MultiTaskConfigurable3dUNet
 from pytorch3dunet.augment.transforms import Standardize
 
 import torch
@@ -22,9 +16,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataloading.dataset import ZarrSegmentationDataset3D
 from visualization.plotting import save_debug_gif,log_3d_slices_as_images, debug_dataloader_plot, export_data_dict_as_tif
+from builders.utils import get_blocks, print_config
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
-from losses.losses import masked_cosine_loss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
-
+from losses.losses import MaskedCosineLoss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
 
 
 class BaseTrainer:
@@ -47,7 +41,7 @@ class BaseTrainer:
                  config_file: str,
                  debug_dataloader: bool = False):
         with open(config_file, "r") as f:
-            config = json.load(f)
+            config = yaml.safe_load(f)
 
         tr_params = SimpleNamespace(**config["tr_params"])
         model_config = SimpleNamespace(**config["model_config"])
@@ -60,27 +54,32 @@ class BaseTrainer:
         self.gradient_accumulation = int(getattr(tr_params, "gradient_accumulation", 1))
         self.optimizer = str(getattr(tr_params, "optimizer", "AdamW"))
         self.tr_val_split = float(getattr(tr_params, "tr_val_split", 0.95))
-        self.f_maps = list(getattr(model_config, "f_maps", [32, 64, 128, 256]))
-        self.num_levels = int(getattr(model_config, "n_levels", 6))
         self.ignore_label = getattr(tr_params, "ignore_label", None)
         self.dilate_label = bool(getattr(tr_params, "dilate_label", False))
         self.loss_only_on_label = bool(getattr(tr_params, "loss_only_on_label", False))
         self.label_smoothing = float(getattr(tr_params, "label_smoothing", 0.2))
-        self.min_labeled_ratio = float(getattr(dataset_config, "min_labeled_ratio", 0.1))
-        self.min_bbox_percent = float(getattr(dataset_config, "min_bbox_percent", 0.95))
-        self.use_cache = bool(getattr(dataset_config, "use_cache", True))
-        self.cache_file = Path((getattr(dataset_config, "cache_file",'valid_patches.json')))
-        self.max_steps_per_epoch = int(getattr(tr_params, "max_steps_per_epoch", 500))
-        self.max_val_steps_per_epoch = int(getattr(tr_params, "max_val_steps_per_epoch", 25))
         self.max_epoch = int(getattr(tr_params, "max_epoch", 500))
         self.initial_lr = float(getattr(tr_params, "initial_lr", 1e-3))
         self.weight_decay = float(getattr(tr_params, "weight_decay", 1e-4))
         self.ckpt_out_base = Path(getattr(tr_params, "ckpt_out_base", "./checkpoints/"))
         self.checkpoint_path = getattr(tr_params, "checkpoint_path", None)
         self.load_weights_only = getattr(tr_params, "load_weights_only", False)
+        self.max_steps_per_epoch = int(getattr(tr_params, "max_steps_per_epoch", 500))
+        self.max_val_steps_per_epoch = int(getattr(tr_params, "max_val_steps_per_epoch", 25))
         self.num_dataloader_workers = int(getattr(tr_params, "num_dataloader_workers", 4))
         self.tensorboard_log_dir = str(getattr(tr_params, "tensorboard_log_dir", "./tensorboard_logs/"))
+
+        self.min_labeled_ratio = float(getattr(dataset_config, "min_labeled_ratio", 0.1))
+        self.min_bbox_percent = float(getattr(dataset_config, "min_bbox_percent", 0.95))
+        self.use_cache = bool(getattr(dataset_config, "use_cache", True))
+        self.cache_file = Path((getattr(dataset_config, "cache_file",'valid_patches.json')))
+
         self.debug_dataloader = debug_dataloader
+
+        self.f_maps = list(getattr(model_config, "f_maps", [32, 64, 128, 256]))
+        self.num_levels = int(getattr(model_config, "n_levels", 6))
+
+        self.tensorboard_log_dir = Path(self.tensorboard_log_dir) / self.model_name
 
         self.normalization = Standardize(channelwise=False)
 
@@ -94,16 +93,25 @@ class BaseTrainer:
         self.volume_paths = dataset_config.volume_paths
         self.tasks = dataset_config.targets
 
+        self.model_config = getattr(model_config, "model_config", {})
+        self.model_kwargs = vars(self.model_config).copy()
+
     # --- build model --- #
-    def _build_model(self):
-        model = MultiTaskResidualUNetSE3D(
-            in_channels=1,
-            tasks=self.tasks,
-            f_maps=self.f_maps,
-            num_levels=self.num_levels
+    def _build_model(self, model_kwargs):
+        if "basic_block" in model_kwargs:
+            basic_block = get_blocks(model_kwargs["basic_block"])
+            model_kwargs.pop("basic_block")
+            model_kwargs["basic_block"] = basic_block
+
+        model = MultiTaskConfigurable3dUNet(
+            self.tasks,
+            **model_kwargs
         )
+
+        model.printconfig()
         return model
 
+    # --- configure dataset --- #
     def _configure_dataset(self):
         dataset = ZarrSegmentationDataset3D(
             volume_paths=self.volume_paths,
@@ -122,6 +130,9 @@ class BaseTrainer:
 
     # --- losses ---- #
     def _build_loss(self):
+        # if you override this you need to allow for a loss fn to apply to every single
+        # possible target in the dictionary of targets . the easiest is probably
+        # to add it in losses.loss, import it here, and then add it to the map
         LOSS_FN_MAP = {
             "BCEDiceLoss": BCEDiceLoss,
             "BCEWithLogitsLossLabelSmoothing": BCEWithLogitsLossLabelSmoothing,
@@ -130,12 +141,14 @@ class BaseTrainer:
             "BCELoss": BCELoss,
             "CrossEntropyLoss": CrossEntropyLoss,
             "MSELoss": MSELoss,
-            "masked_cosine_loss": masked_cosine_loss,
+            "MaskedCosineLoss": MaskedCosineLoss
         }
 
         loss_fns = {}
         for task_name, task_info in self.tasks.items():
             loss_fn = task_info.get("loss_fn", "BCEDiceLoss")
+            if loss_fn not in LOSS_FN_MAP:
+                raise ValueError(f"Loss function {loss_fn} not found in LOSS_FN_MAP. Add it to the mapping and try again.")
             loss_kwargs = task_info.get("loss_kwargs", {})
             loss_fns[task_name] = LOSS_FN_MAP[loss_fn](**loss_kwargs)
 
@@ -195,10 +208,9 @@ class BaseTrainer:
 
         return train_dataloader, val_dataloader
 
-
     def train(self):
 
-        model = self._build_model()
+        model = self._build_model(self.model_kwargs)
         optimizer = self._get_optimizer(model)
         loss_fns = self._build_loss()
         dataset = self._configure_dataset()
@@ -238,7 +250,7 @@ class BaseTrainer:
             else:
                 # Start a 'new run' from epoch 0 or 1
                 start_epoch = 0
-                scheduler = CosineAnnealingLR(optimizer, T_max=self.max_epoch, eta_min=0)
+                scheduler = self._get_scheduler(optimizer)
                 print("Loaded model weights only; starting new training run from epoch 1.")
 
         writer = SummaryWriter(log_dir=self.tensorboard_log_dir)
@@ -256,6 +268,12 @@ class BaseTrainer:
             for i, data_dict in pbar:
                 if i >= self.max_steps_per_epoch:
                     break
+
+                if i == 0:
+                    for item in data_dict:
+                        print(f"{item}: {data_dict[item].dtype}")
+                        print(f"{item}: {data_dict[item].shape}")
+                        print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
 
                 global_step += 1
 
