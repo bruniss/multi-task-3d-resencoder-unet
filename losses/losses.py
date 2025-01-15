@@ -184,26 +184,35 @@ def normal_cosine_loss(pred, target):
     cos_sim = F.cosine_similarity(pred, target, dim=1, eps=1e-8)
     return 1.0 - cos_sim.mean()
 
-def masked_cosine_loss(pred, target):
-    """
-    pred:   [B, 3, D, H, W] predicted normals
-    target: [B, 3, D, H, W] ground-truth normals
-    We derive a mask from target by checking which normals are nonzero.
-    """
+class MaskedCosineLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
 
-    mag = torch.norm(target, dim=1)         # [B, D, H, W]
-    mask = (mag > 1e-6).float()             # [B, D, H, W]
-    # i removed the normalization because it was making it hard for the model
-    # i can just handle normalization after inference, comment out below
-    # lines to turn it back on
-    pred_norm = torch.norm(pred, dim=1, keepdim=True).clamp(min=1e-8)
-    pred_unit = pred / pred_norm
-    cos_sim = F.cosine_similarity(pred_unit, target, dim=1, eps=1e-8)  # [B, D, H, W]
-    cos_sim_masked = cos_sim * mask
-    valid_count = mask.sum() + 1e-8
-    mean_cos_sim = cos_sim_masked.sum() / valid_count
+    def forward(self, pred, target):
+        """
+        pred:   [B, 3, D, H, W] predicted normals
+        target: [B, 3, D, H, W] ground-truth normals
 
-    return 1.0 - mean_cos_sim
+        We derive a mask from target by checking which normals are nonzero.
+        """
+        # Magnitude of target vectors
+        mag = torch.norm(target, dim=1)         # [B, D, H, W]
+        mask = (mag > 1e-6).float()             # [B, D, H, W]
+
+        # If you want to normalize `pred` to unit vectors:
+        pred_norm = torch.norm(pred, dim=1, keepdim=True).clamp(min=1e-8)
+        pred_unit = pred / pred_norm
+
+        # Compute masked cosine similarity
+        cos_sim = F.cosine_similarity(pred_unit, target, dim=1, eps=1e-8)  # [B, D, H, W]
+        cos_sim_masked = cos_sim * mask
+
+        # Mean over valid (non-zero) pixels
+        valid_count = mask.sum() + 1e-8
+        mean_cos_sim = cos_sim_masked.sum() / valid_count
+
+        # Return 1 - mean cos sim (so it's a "loss" to minimize)
+        return 1.0 - mean_cos_sim
 
 class BCEWithLogitsLossLabelSmoothing(nn.Module):
     def __init__(self, smoothing=0.1, reduction='mean'):
@@ -227,11 +236,6 @@ class BCEWithLogitsLossLabelSmoothing(nn.Module):
 
         loss = self.criterion(logits, smoothed_targets)
         return loss
-
-
-import torch
-import torch.nn as nn
-
 
 class BCEWithLogitsLossZSmooth(nn.Module):
     """

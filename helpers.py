@@ -212,3 +212,85 @@ def generate_positions(min_val, max_val, patch_size, step):
         positions.append(last_start)
 
     return sorted(set(positions))
+
+
+def get_overlapping_chunks(z0, y0, x0, patch_z, patch_y, patch_x,
+                           chunk_z, chunk_y, chunk_x):
+    """
+    Given a patch at (z0, y0, x0) with shape (patch_z, patch_y, patch_x),
+    returns a list of:
+    [
+      (cz, cy, cx,
+       z_start_in_chunk, z_end_in_chunk,
+       y_start_in_chunk, y_end_in_chunk,
+       x_start_in_chunk, x_end_in_chunk,
+       z_start_in_patch, z_end_in_patch,
+       y_start_in_patch, y_end_in_patch,
+       x_start_in_patch, x_end_in_patch),
+      ...
+    ]
+    where (cz, cy, cx) is the chunk index.
+    """
+    results = []
+
+    # Global patch range:
+    z1 = z0 + patch_z
+    y1 = y0 + patch_y
+    x1 = x0 + patch_x
+
+    # For each chunk index in Z:
+    cz0 = z0 // chunk_z
+    cz1 = (z1 - 1) // chunk_z  # inclusive
+    for cz in range(cz0, cz1 + 1):
+        # chunk's global z range
+        chunk_z0_global = cz * chunk_z
+        chunk_z1_global = chunk_z0_global + chunk_z
+
+        # Overlap in Z:
+        overlap_z0 = max(z0, chunk_z0_global)
+        overlap_z1 = min(z1, chunk_z1_global)
+
+        # local offset inside chunk:
+        z_start_in_chunk = overlap_z0 - chunk_z0_global
+        z_end_in_chunk = overlap_z1 - chunk_z0_global
+
+        # offset inside patch:
+        z_start_in_patch = overlap_z0 - z0
+        z_end_in_patch = overlap_z1 - z0
+
+        # Similar logic for Y:
+        cy0 = y0 // chunk_y
+        cy1 = (y1 - 1) // chunk_y
+        for cy in range(cy0, cy1 + 1):
+            chunk_y0_global = cy * chunk_y
+            chunk_y1_global = chunk_y0_global + chunk_y
+            overlap_y0 = max(y0, chunk_y0_global)
+            overlap_y1 = min(y1, chunk_y1_global)
+            y_start_in_chunk = overlap_y0 - chunk_y0_global
+            y_end_in_chunk = overlap_y1 - chunk_y0_global
+            y_start_in_patch = overlap_y0 - y0
+            y_end_in_patch = overlap_y1 - y0
+
+            # Similar logic for X:
+            cx0 = x0 // chunk_x
+            cx1 = (x1 - 1) // chunk_x
+            for cx in range(cx0, cx1 + 1):
+                chunk_x0_global = cx * chunk_x
+                chunk_x1_global = chunk_x0_global + chunk_x
+                overlap_x0 = max(x0, chunk_x0_global)
+                overlap_x1 = min(x1, chunk_x1_global)
+                x_start_in_chunk = overlap_x0 - chunk_x0_global
+                x_end_in_chunk = overlap_x1 - chunk_x0_global
+                x_start_in_patch = overlap_x0 - x0
+                x_end_in_patch = overlap_x1 - x0
+
+                results.append((
+                    cz, cy, cx,
+                    z_start_in_chunk, z_end_in_chunk,
+                    y_start_in_chunk, y_end_in_chunk,
+                    x_start_in_chunk, x_end_in_chunk,
+                    z_start_in_patch, z_end_in_patch,
+                    y_start_in_patch, y_end_in_patch,
+                    x_start_in_patch, x_end_in_patch
+                ))
+    return results

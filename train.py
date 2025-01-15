@@ -1,17 +1,10 @@
 import os
 from pathlib import Path
-import json
+import yaml
 from types import SimpleNamespace
-
 from tqdm import tqdm
 import numpy as np
-from pytorch3dunet.unet3d.model import MultiTaskResidualUNetSE3D
-from pytorch3dunet.unet3d.buildingblocks import (
-    nnUNetStyleResNetBlockSE,
-    ResNetBlockSE,
-    ResNetBlock,
-    DoubleConv
-)
+from builders.basic_model import MultiTaskConfigurable3dUNet
 from pytorch3dunet.augment.transforms import Standardize
 
 import torch
@@ -22,11 +15,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataloading.dataset import ZarrSegmentationDataset3D
 from visualization.plotting import save_debug_gif,log_3d_slices_as_images, debug_dataloader_plot, export_data_dict_as_tif
+from builders.build_network_from_config import BuildNetworkFromConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
-from losses.losses import masked_cosine_loss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
-
-from losses.get_loss import get_loss_fn
-
+from losses.losses import MaskedCosineLoss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
 
 class BaseTrainer:
     """
@@ -48,41 +39,57 @@ class BaseTrainer:
                  config_file: str,
                  debug_dataloader: bool = False):
         with open(config_file, "r") as f:
-            config = json.load(f)
+            config = yaml.safe_load(f)
 
         tr_params = SimpleNamespace(**config["tr_params"])
         model_config = SimpleNamespace(**config["model_config"])
         dataset_config = SimpleNamespace(**config["dataset_config"])
 
+
         # --- configs --- #
         self.model_name = getattr(tr_params, "model_name", "SheetNorm")
+        self.vram_max = float(getattr(tr_params, "vram_max", 16))
+        self.autoconfigure = bool(getattr(tr_params, "autoconfigure", True))
         self.patch_size = tuple(getattr(tr_params, "patch_size", [192, 192, 192]))
         self.batch_size = int(getattr(tr_params, "batch_size", 2))
         self.gradient_accumulation = int(getattr(tr_params, "gradient_accumulation", 1))
         self.optimizer = str(getattr(tr_params, "optimizer", "AdamW"))
         self.tr_val_split = float(getattr(tr_params, "tr_val_split", 0.95))
-        self.f_maps = list(getattr(model_config, "f_maps", [32, 64, 128, 256]))
-        self.num_levels = int(getattr(model_config, "n_levels", 6))
         self.ignore_label = getattr(tr_params, "ignore_label", None)
         self.dilate_label = bool(getattr(tr_params, "dilate_label", False))
         self.loss_only_on_label = bool(getattr(tr_params, "loss_only_on_label", False))
         self.label_smoothing = float(getattr(tr_params, "label_smoothing", 0.2))
-        self.min_labeled_ratio = float(getattr(dataset_config, "min_labeled_ratio", 0.1))
-        self.min_bbox_percent = float(getattr(dataset_config, "min_bbox_percent", 0.95))
-        self.use_cache = bool(getattr(dataset_config, "use_cache", True))
-        self.cache_file = Path((getattr(dataset_config, "cache_file",'valid_patches.json')))
-        self.max_steps_per_epoch = int(getattr(tr_params, "max_steps_per_epoch", 500))
-        self.max_val_steps_per_epoch = int(getattr(tr_params, "max_val_steps_per_epoch", 25))
         self.max_epoch = int(getattr(tr_params, "max_epoch", 500))
         self.initial_lr = float(getattr(tr_params, "initial_lr", 1e-3))
         self.weight_decay = float(getattr(tr_params, "weight_decay", 1e-4))
         self.ckpt_out_base = Path(getattr(tr_params, "ckpt_out_base", "./checkpoints/"))
         self.checkpoint_path = getattr(tr_params, "checkpoint_path", None)
         self.load_weights_only = getattr(tr_params, "load_weights_only", False)
+        self.max_steps_per_epoch = int(getattr(tr_params, "max_steps_per_epoch", 500))
+        self.max_val_steps_per_epoch = int(getattr(tr_params, "max_val_steps_per_epoch", 25))
         self.num_dataloader_workers = int(getattr(tr_params, "num_dataloader_workers", 4))
         self.tensorboard_log_dir = str(getattr(tr_params, "tensorboard_log_dir", "./tensorboard_logs/"))
+
+        self.min_labeled_ratio = float(getattr(dataset_config, "min_labeled_ratio", 0.1))
+        self.min_bbox_percent = float(getattr(dataset_config, "min_bbox_percent", 0.95))
+        self.use_cache = bool(getattr(dataset_config, "use_cache", True))
+        self.cache_file = Path((getattr(dataset_config, "cache_file",'valid_patches.json')))
+        self.in_channels = int(getattr(dataset_config, "in_channels", 1))
+
         self.debug_dataloader = debug_dataloader
-        self.loss_fns = {} # these get defined later
+
+        #self.f_maps = list(getattr(model_config, "f_maps", [32, 64, 128, 256]))
+
+        #if self.vram_max <= 8024:
+        #    self.patch_size = (128, 128, 128)
+        #    self.batch_size = 2
+
+        #if self.vram_max > 8024 and self.vram_max <= 16048:
+        #    self.patch_size = (192, 192, 192)
+        #    self.batch_size = 3
+
+
+        self.tensorboard_log_dir = Path(self.tensorboard_log_dir) / self.model_name
 
         self.normalization = Standardize(channelwise=False)
 
@@ -92,60 +99,64 @@ class BaseTrainer:
             self.checkpoint_path = None
 
         os.makedirs(self.ckpt_out_base, exist_ok=True)
-        #self.data_path = Path(getattr(dataset_config, "data_path", None))
-
-        #targets = dataset_config.targets
-        #self.tasks = {
-        #    key: {
-        #        "dataset_path": val["dataset_path"],
-        #        "channels": val["channels"],
-        #        "activation": val["activation"],
-        #        "weight": val.get("weight", 1.0)
-        #    }
-        #    for key, val in targets.items()
-        #}
 
         self.volume_paths = dataset_config.volume_paths
         self.tasks = dataset_config.targets
 
+        self.out_channels = ()
+        for task_name, task_info in self.tasks.items():
+            self.out_channels += (task_info["channels"],)
 
-    def train(self):
+        self.model_kwargs = vars(model_config).copy()
 
-        model = MultiTaskResidualUNetSE3D(
-            in_channels=1,
+    # --- build model --- #
+    def _build_model(self, model_kwargs):
+
+        builder = BuildNetworkFromConfig(
             tasks=self.tasks,
-            f_maps=self.f_maps,
-            num_levels=self.num_levels
+            patch_size=self.patch_size,
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            batch_size=self.batch_size,
+            vram_target=self.vram_max,
+            autoconfigure=self.autoconfigure,
+            **model_kwargs,
         )
 
+        vram = builder.estimate_vram_usage()
+        print(f"Estimated vram usage for this model with your configs: {vram} MB")
+        if vram > self.vram_max:
+            print(f"Estimated vram use of {vram} is greater than the vram max set in your config. Exiting. Please adjust your config accordingly.")
+            return
 
+        model = builder.build()
+
+        model.print_config()
+
+        return model
+
+    # --- configure dataset --- #
+    def _configure_dataset(self):
         dataset = ZarrSegmentationDataset3D(
             volume_paths=self.volume_paths,
             tasks=self.tasks,
             patch_size=self.patch_size,
             min_labeled_ratio=self.min_labeled_ratio,
-            min_bbox_percent = self.min_bbox_percent,
-            normalization = self.normalization,
-            dilate_label = False,
-            transforms = None,
-            use_cache = self.use_cache,
+            min_bbox_percent=self.min_bbox_percent,
+            normalization=self.normalization,
+            dilate_label=False,
+            transforms=None,
+            use_cache=self.use_cache,
             cache_file=Path(self.cache_file)
         )
 
-        if self.debug_dataloader:
-            export_data_dict_as_tif(
-                dataset=dataset,
-                num_batches=25,
-                out_dir="my_debug_dir"  # directory for saving .png files
-            )
-            print("Debug dataloader plots generated; exiting training early.")
-            return  # <--- ends the 'train' function here
+        return dataset
 
-        device = torch.device('cuda')
-        model = torch.compile(model)
-        model = model.to(device)
-
-        # --- losses ---- #
+    # --- losses ---- #
+    def _build_loss(self):
+        # if you override this you need to allow for a loss fn to apply to every single
+        # possible target in the dictionary of targets . the easiest is probably
+        # to add it in losses.loss, import it here, and then add it to the map
         LOSS_FN_MAP = {
             "BCEDiceLoss": BCEDiceLoss,
             "BCEWithLogitsLossLabelSmoothing": BCEWithLogitsLossLabelSmoothing,
@@ -154,21 +165,21 @@ class BaseTrainer:
             "BCELoss": BCELoss,
             "CrossEntropyLoss": CrossEntropyLoss,
             "MSELoss": MSELoss,
-            "masked_cosine_loss": masked_cosine_loss,
+            "MaskedCosineLoss": MaskedCosineLoss
         }
 
-        self.loss_fns = {}
+        loss_fns = {}
         for task_name, task_info in self.tasks.items():
+            loss_fn = task_info.get("loss_fn", "BCEDiceLoss")
+            if loss_fn not in LOSS_FN_MAP:
+                raise ValueError(f"Loss function {loss_fn} not found in LOSS_FN_MAP. Add it to the mapping and try again.")
+            loss_kwargs = task_info.get("loss_kwargs", {})
+            loss_fns[task_name] = LOSS_FN_MAP[loss_fn](**loss_kwargs)
 
-            # i want to use cosine loss specifically for normals
-            if task_name in ("normal", "normals"):
-                self.loss_fns[task_name] = masked_cosine_loss
+        return loss_fns
 
-            else:
-                #self.loss_fns[task_name] = BCEWithLogitsLossLabelSmoothing(smoothing=self.label_smoothing)
-                self.loss_fns[task_name] = BCEDiceLoss(alpha=0.5, beta=0.5)
-                #self.loss_fns[task_name] = BCEWithLogitsLossZSmooth(center_smoothing=0.025, edge_smoothing=0.15,)
-
+    # --- optimizer ---- #
+    def _get_optimizer(self, model):
         if self.optimizer == "SGD":
             optimizer = SGD(
                 model.parameters(),
@@ -183,12 +194,22 @@ class BaseTrainer:
                 lr=self.initial_lr,
                 weight_decay=self.weight_decay
             )
+        return optimizer
 
+    # --- scheduler --- #
+    def _get_scheduler(self, optimizer):
         scheduler = CosineAnnealingLR(optimizer,
                                       T_max=self.max_epoch,
                                       eta_min=0)
+        return scheduler
 
+    # --- scaler --- #
+    def _get_scaler(self):
+        scaler = torch.amp.GradScaler("cuda")
+        return scaler
 
+    # --- dataloaders --- #
+    def _configure_dataloaders(self, dataset):
         dataset_size = len(dataset)
         indices = list(range(dataset_size))
         np.random.shuffle(indices)
@@ -198,14 +219,7 @@ class BaseTrainer:
         train_indices, val_indices = indices[:split], indices[split:]
         batch_size = self.batch_size
 
-        # apply gradient accumulation
-        grad_accumulate_n = self.gradient_accumulation
-
-        scaler = torch.cuda.amp.GradScaler()
-
-        # ---- dataloading ----- #
-
-        dataloader = DataLoader(dataset,
+        train_dataloader = DataLoader(dataset,
                                 batch_size=batch_size,
                                 sampler=SubsetRandomSampler(train_indices),
                                 pin_memory=True,
@@ -216,7 +230,34 @@ class BaseTrainer:
                                     pin_memory=True,
                                     num_workers=self.num_dataloader_workers)
 
+        return train_dataloader, val_dataloader
+
+    def train(self):
+
+        model = self._build_model(self.model_kwargs)
+        optimizer = self._get_optimizer(model)
+        loss_fns = self._build_loss()
+        dataset = self._configure_dataset()
+        scheduler = self._get_scheduler(optimizer)
+        scaler = self._get_scaler()
+
+        device = torch.device('cuda')
+        model = model.to(device)
+        model = torch.compile(model)
+
+        train_dataloader, val_dataloader = self._configure_dataloaders(dataset)
+
+        if self.debug_dataloader:
+            export_data_dict_as_tif(
+                dataset=dataset,
+                num_batches=25,
+                out_dir="debug_dir"
+            )
+            print("Debug dataloader plots generated; exiting training early.")
+            return
+
         start_epoch = 0
+
         if self.checkpoint_path is not None and Path(self.checkpoint_path).exists():
             print(f"Loading checkpoint from {self.checkpoint_path}")
             checkpoint = torch.load(self.checkpoint_path, map_location=device)
@@ -233,22 +274,31 @@ class BaseTrainer:
             else:
                 # Start a 'new run' from epoch 0 or 1
                 start_epoch = 0
-                scheduler = CosineAnnealingLR(optimizer, T_max=self.max_epoch, eta_min=0)
+                scheduler = self._get_scheduler(optimizer)
                 print("Loaded model weights only; starting new training run from epoch 1.")
 
         writer = SummaryWriter(log_dir=self.tensorboard_log_dir)
         global_step = 0
+        grad_accumulate_n = self.gradient_accumulation
+
         # ---- training! ----- #
         for epoch in range(start_epoch, self.max_epoch):
             model.train()
 
             train_running_losses = {t_name: 0.0 for t_name in self.tasks}
-            pbar = tqdm(enumerate(dataloader), total=self.max_steps_per_epoch)
+            pbar = tqdm(enumerate(train_dataloader), total=self.max_steps_per_epoch)
             steps = 0
 
             for i, data_dict in pbar:
                 if i >= self.max_steps_per_epoch:
                     break
+
+                if epoch == 0 and i == 0:
+                    for item in data_dict:
+                        print(f"Items from the first batch -- Double check that your shapes and values are expected:")
+                        print(f"{item}: {data_dict[item].dtype}")
+                        print(f"{item}: {data_dict[item].shape}")
+                        print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
 
                 global_step += 1
 
@@ -260,14 +310,14 @@ class BaseTrainer:
                 }
 
                 # forward
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast("cuda"):
                     outputs = model(inputs)
                     total_loss = 0.0
                     per_task_losses = {}
 
                     for t_name, t_gt in targets_dict.items():
                         t_pred = outputs[t_name]
-                        t_loss_fn = self.loss_fns[t_name]
+                        t_loss_fn = loss_fns[t_name]
                         task_weight = self.tasks[t_name].get("weight", 1.0)
                         t_loss = t_loss_fn(t_pred, t_gt) * task_weight
 
@@ -283,7 +333,7 @@ class BaseTrainer:
                 # backward
                 scaler.scale(total_loss).backward()
 
-                if (i + 1) % grad_accumulate_n == 0 or (i + 1) == len(dataloader):
+                if (i + 1) % grad_accumulate_n == 0 or (i + 1) == len(train_dataloader):
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 3)
                     scaler.step(optimizer)
                     scaler.update()
@@ -313,6 +363,17 @@ class BaseTrainer:
                 'epoch': epoch
             }, f"{self.ckpt_out_base}/{self.model_name}_{epoch + 1}.pth")
 
+            # clean up old checkpoints -- currently just keeps 10 newest
+            all_checkpoints = sorted(
+                self.ckpt_out_base.glob(f"{self.model_name}_*.pth"),
+                key=lambda x: x.stat().st_mtime
+            )
+
+            # if more than 10, remove the oldest
+            while len(all_checkpoints) > 10:
+                oldest = all_checkpoints.pop(0)
+                oldest.unlink()  #
+
             # ---- validation ----- #
             if epoch % 1 == 0:
                 model.eval()
@@ -332,12 +393,12 @@ class BaseTrainer:
                             if k != "image"
                         }
 
-                        with torch.cuda.amp.autocast():
+                        with torch.amp.autocast("cuda"):
                             outputs = model(inputs)
                             total_val_loss = 0.0
                             for t_name, t_gt in targets_dict.items():
                                 t_pred = outputs[t_name]
-                                t_loss_fn = self.loss_fns[t_name]
+                                t_loss_fn = loss_fns[t_name]
                                 t_loss = t_loss_fn(t_pred, t_gt)
 
                                 total_val_loss += t_loss
@@ -347,7 +408,7 @@ class BaseTrainer:
 
                             if i == 0:
                                 b_idx = 0  # pick which sample in the batch to visualize
-                                # Slicing shape: [1, C, D, H, W]
+                                # Slicing shape: [1, c, z, y, x ]
                                 inputs_first = inputs[b_idx: b_idx + 1]
 
                                 targets_dict_first = {}
@@ -363,46 +424,10 @@ class BaseTrainer:
                                     input_volume=inputs_first,
                                     targets_dict=targets_dict_first,
                                     outputs_dict=outputs_dict_first,
-                                    tasks_dict=self.tasks,
-                                    # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
+                                    tasks_dict=self.tasks, # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
                                     epoch=epoch,
-                                    save_path=f"{self.model_name}_{epoch}_debug.gif",
-                                    show_normal_magnitude=("normals" in targets_dict_first)  # show normal magnitude if your "normals" task exists
+                                    save_path=f"{self.model_name}_debug.gif"
                                 )
-
-                                # Log 2D slices to TensorBoard --
-                                # input volume
-                                log_3d_slices_as_images(
-                                    writer=writer,
-                                    tag_prefix="val_input",
-                                    volume_3d=inputs_first,
-                                    global_step=epoch,
-                                    max_slices=8  # Or whatever you prefer
-                                )
-
-                                # each task’s GT slices
-                                for t_name, gt_vol in targets_dict_first.items():
-                                    log_3d_slices_as_images(
-                                        writer=writer,
-                                        tag_prefix=f"val_{t_name}_gt",
-                                        volume_3d=gt_vol,
-                                        task_name=t_name,  # needed if you want to apply activation logic
-                                        tasks_dict=self.tasks,
-                                        global_step=epoch,
-                                        max_slices=4
-                                    )
-
-                                # each task’s predicted slices
-                                for t_name, pred_vol in outputs_dict_first.items():
-                                    log_3d_slices_as_images(
-                                        writer=writer,
-                                        tag_prefix=f"val_{t_name}_pred",
-                                        volume_3d=pred_vol,
-                                        task_name=t_name,
-                                        tasks_dict=self.tasks,
-                                        global_step=epoch,
-                                        max_slices=4
-                                    )
 
                     desc_parts = []
                     for t_name in self.tasks:
