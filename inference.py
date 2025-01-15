@@ -8,11 +8,11 @@ import zarr
 from numcodecs import Blosc
 import cv2
 import yaml
-
 import torch
 from torch.utils.data import DataLoader
-
+from collections import defaultdict
 from pytorch3dunet.unet3d.model import MultiTaskResidualUNetSE3D
+from helpers import get_overlapping_chunks
 
 from dataloading.inference_dataset import InferenceDataset
 
@@ -82,7 +82,7 @@ class ZarrInferenceHandler:
                             batch_size=self.batch_size,
                             shuffle=False,
                             num_workers=self.num_dataloader_workers,
-                            prefetch_factor=4,
+                            prefetch_factor=8,
                             pin_memory=True,
                             persistent_workers=True)
 
@@ -116,8 +116,7 @@ class ZarrInferenceHandler:
                 chunks=chunks,
                 dtype='float32',
                 compressor=compressor,
-                fill_value=0,
-                write_empty_chunks=False
+                fill_value=0
             )
 
             cnt_ds = zarr_store.create_dataset(
@@ -126,15 +125,14 @@ class ZarrInferenceHandler:
                 chunks=(chunk_z, chunk_y, chunk_x),
                 dtype='float32',
                 compressor=compressor,
-                fill_value=0,
-                write_empty_chunks=False
+                fill_value=0
             )
 
             output_arrays[tgt_name] = sum_ds
             count_arrays[tgt_name] = cnt_ds
 
         model.eval()
-        with torch.no_grad():
+        with torch.no_grad(), torch.amp.autocast("cuda"):
             # ---- Inference pass (accumulate sums) ---- #
             for batch_idx, data in tqdm(enumerate(loader), total=len(loader), desc="Running inference on patches..."):
                 patches = data["image"].to(device)  # (batch, in_channels, z, y, x)

@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import torch
 from torch import optim
-from pytorch3dunet.unet3d.buildingblocks import (DoubleConv, ResNetBlock, ResNetBlockSE,
+from builders.blocks import (DoubleConv, ResNetBlock, ResNetBlockSE,
                                                  nnUNetStyleResNetBlockSE, SingleConv)
 
 def get_blocks(name: str):
@@ -168,4 +168,15 @@ def get_class(class_name, modules):
         if clazz is not None:
             return clazz
     raise RuntimeError(f'Unsupported dataset class: {class_name}')
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 

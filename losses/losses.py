@@ -237,11 +237,6 @@ class BCEWithLogitsLossLabelSmoothing(nn.Module):
         loss = self.criterion(logits, smoothed_targets)
         return loss
 
-
-import torch
-import torch.nn as nn
-
-
 class BCEWithLogitsLossZSmooth(nn.Module):
     """
     Extends BCEWithLogitsLoss by applying slice-dependent label smoothing along the Z dimension.

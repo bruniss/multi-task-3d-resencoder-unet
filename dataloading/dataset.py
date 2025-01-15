@@ -53,6 +53,15 @@ class ZarrSegmentationDataset3D(Dataset):
         for vol_idx, vol_info in enumerate(volume_paths):
             # open input
             input_zarr = zarr.open(vol_info["input"], mode='r')
+            if input_zarr.shape[0] < patch_size.shape[0]:
+                raise ValueError(f"Input volume {vol_idx} has 'z' dimension smaller than patch size. "
+                                 f"Please decrease the patch size or increase the input volume size. ")
+            if input_zarr.shape[1] < patch_size.shape[1]:
+                raise ValueError(f"Input volume {vol_idx} has 'y' dimension smaller than patch size."
+                                 f"Please decrease the patch size or increase the input volume size. ")
+            if input_zarr.shape[2] < patch_size.shape[2]:
+                raise ValueError(f"Input volume {vol_idx} has 'x' dimension smaller than patch size."
+                                 f"Please decrease the patch size or increase the input volume size. ")
 
             # open each target for the tasks we care about
             target_arrays = {}
@@ -171,7 +180,7 @@ class ZarrSegmentationDataset3D(Dataset):
                     t_patch /= 65535.0
 
             # apply an optional label dilation you can set in the json
-            if (task_name.lower() == "sheet") and self.dilate_label:
+            if (task_name.lower() != "normals") and self.dilate_label:
                 t_patch = (t_patch > 0).astype(np.float32)
                 t_patch = dilation(t_patch, ball(5))
 

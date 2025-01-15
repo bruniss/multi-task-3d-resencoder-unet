@@ -6,7 +6,7 @@ import torch
 from torch import nn as nn
 from torch.nn import functional as F
 
-from pytorch3dunet.unet3d.se import ChannelSELayer3D, ChannelSpatialSELayer3D, SpatialSELayer3D
+from builders.se import ChannelSELayer3D, ChannelSpatialSELayer3D, SpatialSELayer3D
 
 
 def create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding,
@@ -187,7 +187,7 @@ class ResNetBlock(nn.Module):
     Notice we use ELU instead of ReLU (order='cge') and put non-linearity after the groupnorm.
     """
 
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='cge', num_groups=8, is3d=True, **kwargs):
+    def __init__(self, in_channels, out_channels, kernel_size=3, order='cge', num_groups=8, is3d=True, padding=1, dropout_prob=0.1, **kwargs):
         super(ResNetBlock, self).__init__()
 
         if in_channels != out_channels:
@@ -232,10 +232,14 @@ class ResNetBlock(nn.Module):
 
 
 class ResNetBlockSE(ResNetBlock):
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='cge', num_groups=8, se_module='scse', **kwargs):
+    def __init__(self, in_channels, out_channels, kernel_size=3, order='cge', num_groups=8, se_module='scse', padding=1, dropout_prob=0.1, **kwargs):
         super(ResNetBlockSE, self).__init__(
-            in_channels, out_channels, kernel_size=kernel_size, order=order,
-            num_groups=num_groups, **kwargs)
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            order=order,
+            num_groups=num_groups,
+            **kwargs)
         assert se_module in ['scse', 'cse', 'sse']
         if se_module == 'scse':
             self.se_module = ChannelSpatialSELayer3D(num_channels=out_channels, reduction_ratio=1)
@@ -254,9 +258,18 @@ class nnUNetStyleResNetBlockSE(ResNetBlockSE):
     Customized ResNetBlockSE to match the nnUNet architecture
     """
     def __init__(self, in_channels, out_channels, kernel_size=3, order='cr',
-                 num_groups=8, stride=1, dilation=1, **kwargs):
-        super().__init__(in_channels, out_channels, kernel_size, order,
-                        num_groups, stride, dilation)
+                 num_groups=8, stride=1, dilation=1, padding=1, dropout_prob=0.1, se_module='scse',  **kwargs):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            order=order,
+            num_groups=num_groups,
+            se_module=se_module,  # name it explicitly
+            padding=padding,  # name it
+            dropout_prob=dropout_prob,  # name it
+            **kwargs
+        )
         # Override normalization to use InstanceNorm3d
         self.instancenorm = nn.InstanceNorm3d(out_channels, eps=1e-5, affine=True)
         # Override activation to use LeakyReLU
@@ -289,7 +302,7 @@ class Encoder(nn.Module):
 
     def __init__(self, in_channels, out_channels, conv_kernel_size=3, apply_pooling=True,
                  pool_kernel_size=2, pool_type='max', basic_module=DoubleConv, conv_layer_order='gcr',
-                 num_groups=8, padding=1, upscale=2, dropout_prob=0.1, is3d=True):
+                 num_groups=8, padding=1, upscale=2, dropout_prob=0.1, is3d=True, se_module=None):
         super(Encoder, self).__init__()
         assert pool_type in ['max', 'avg']
         if apply_pooling:
@@ -314,6 +327,7 @@ class Encoder(nn.Module):
                                          padding=padding,
                                          upscale=upscale,
                                          dropout_prob=dropout_prob,
+                                         se_module=se_module,
                                          is3d=is3d)
 
     def forward(self, x):
@@ -351,7 +365,7 @@ class Decoder(nn.Module):
 
     def __init__(self, in_channels, out_channels, conv_kernel_size=3, scale_factor=2, basic_module=DoubleConv,
                  conv_layer_order='gcr', num_groups=8, padding=1, upsample='default',
-                 dropout_prob=0.1, is3d=True):
+                 dropout_prob=0.1, is3d=True, se_module=None, **kwargs,):
         super(Decoder, self).__init__()
 
         # perform concat joining per default
@@ -366,10 +380,10 @@ class Decoder(nn.Module):
                     upsample = 'nearest'  # use nearest neighbor interpolation for upsampling
                     concat = True  # use concat joining
                     adapt_channels = False  # don't adapt channels
-                elif basic_module == ResNetBlock or basic_module == ResNetBlockSE:
-                    upsample = 'deconv'  # use deconvolution upsampling
-                    concat = False  # use summation joining
-                    adapt_channels = True  # adapt channels after joining
+                elif issubclass(basic_module, ResNetBlockSE) or basic_module == ResNetBlock:
+                    upsample = 'deconv'
+                    concat = False
+                    adapt_channels = True
 
             # perform deconvolution upsampling if mode is deconv
             if upsample == 'deconv':
@@ -398,6 +412,7 @@ class Decoder(nn.Module):
                                          num_groups=num_groups,
                                          padding=padding,
                                          dropout_prob=dropout_prob,
+                                         se_module=se_module,
                                          is3d=is3d)
 
     def forward(self, encoder_features, x):
@@ -416,7 +431,7 @@ class Decoder(nn.Module):
 
 def create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_padding,
                     conv_upscale, dropout_prob,
-                    layer_order, num_groups, pool_kernel_size, is3d):
+                    layer_order, num_groups, pool_kernel_size, is3d, se_module=None):
     # create encoder path consisting of Encoder modules. Depth of the encoder is equal to `len(f_maps)`
     encoders = []
     for i, out_feature_num in enumerate(f_maps):
@@ -431,6 +446,7 @@ def create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_pa
                               padding=conv_padding,
                               upscale=conv_upscale,
                               dropout_prob=dropout_prob,
+                              se_module=se_module,
                               is3d=is3d)
         else:
             encoder = Encoder(f_maps[i - 1], out_feature_num,
@@ -442,6 +458,7 @@ def create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_pa
                               padding=conv_padding,
                               upscale=conv_upscale,
                               dropout_prob=dropout_prob,
+                              se_module=se_module,
                               is3d=is3d)
 
         encoders.append(encoder)
@@ -450,7 +467,7 @@ def create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_pa
 
 
 def create_decoders(f_maps, basic_module, conv_kernel_size, conv_padding, layer_order,
-                    num_groups, upsample, dropout_prob, is3d):
+                    num_groups, upsample, dropout_prob, is3d, scale_factor=2, se_module=None):
     # create decoder path consisting of the Decoder modules. The length of the decoder list is equal to `len(f_maps) - 1`
     decoders = []
     reversed_f_maps = list(reversed(f_maps))
@@ -462,6 +479,14 @@ def create_decoders(f_maps, basic_module, conv_kernel_size, conv_padding, layer_
 
         out_feature_num = reversed_f_maps[i + 1]
 
+        block_class_name = basic_module.__name__
+        if 'SE' in block_class_name:
+            if se_module is None:
+                se_module = 'scse'
+        else:
+            # If it's not an SE block, no need to keep any se_module
+            se_module = None
+
         decoder = Decoder(in_feature_num, out_feature_num,
                           basic_module=basic_module,
                           conv_layer_order=layer_order,
@@ -470,6 +495,8 @@ def create_decoders(f_maps, basic_module, conv_kernel_size, conv_padding, layer_
                           padding=conv_padding,
                           upsample=upsample,
                           dropout_prob=dropout_prob,
+                          se_module=se_module,
+                          scale_factor=scale_factor,
                           is3d=is3d)
         decoders.append(decoder)
     return nn.ModuleList(decoders)

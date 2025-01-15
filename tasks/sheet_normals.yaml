@@ -22,16 +22,16 @@ tr_params:
 
 inference_params:
   patch_size: [64, 192, 192]
-  batch_size: 7
+  batch_size: 16
   checkpoint_path: /mnt/raid_hdd/models/normals/checkpoints/nofliprotate/SheetNorm_388.pth
-  num_dataloader_workers: 8
-  input_path: /mnt/raid_nvme/s1_10000_10064.zarr
+  num_dataloader_workers: 16
+  input_path: /mnt/raid_nvme/s1_6000_7000.zarr
   input_format: zarr
-  output_dir: /mnt/raid_nvme/inference_out/10000_10064
+  output_dir: /mnt/raid_nvme/s1_inference_sheetnorm_6000_7000
   output_format: zarr
   output_type: np.uint8
   output_targets: [sheet, normals]
-  overlap: .30
+  overlap: .05
   targets:
     sheet:
       channels: 1

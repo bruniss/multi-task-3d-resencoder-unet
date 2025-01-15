@@ -2,10 +2,9 @@ import os
 from pathlib import Path
 import yaml
 from types import SimpleNamespace
-
 from tqdm import tqdm
 import numpy as np
-from builders.models import MultiTaskConfigurable3dUNet
+from builders.basic_model import MultiTaskConfigurable3dUNet
 from pytorch3dunet.augment.transforms import Standardize
 
 import torch
@@ -16,10 +15,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataloading.dataset import ZarrSegmentationDataset3D
 from visualization.plotting import save_debug_gif,log_3d_slices_as_images, debug_dataloader_plot, export_data_dict_as_tif
-from builders.utils import get_blocks, print_config
+from builders.build_network_from_config import BuildNetworkFromConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
 from losses.losses import MaskedCosineLoss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
-
 
 class BaseTrainer:
     """
@@ -47,8 +45,11 @@ class BaseTrainer:
         model_config = SimpleNamespace(**config["model_config"])
         dataset_config = SimpleNamespace(**config["dataset_config"])
 
+
         # --- configs --- #
         self.model_name = getattr(tr_params, "model_name", "SheetNorm")
+        self.vram_max = float(getattr(tr_params, "vram_max", 16))
+        self.autoconfigure = bool(getattr(tr_params, "autoconfigure", True))
         self.patch_size = tuple(getattr(tr_params, "patch_size", [192, 192, 192]))
         self.batch_size = int(getattr(tr_params, "batch_size", 2))
         self.gradient_accumulation = int(getattr(tr_params, "gradient_accumulation", 1))
@@ -73,11 +74,20 @@ class BaseTrainer:
         self.min_bbox_percent = float(getattr(dataset_config, "min_bbox_percent", 0.95))
         self.use_cache = bool(getattr(dataset_config, "use_cache", True))
         self.cache_file = Path((getattr(dataset_config, "cache_file",'valid_patches.json')))
+        self.in_channels = int(getattr(dataset_config, "in_channels", 1))
 
         self.debug_dataloader = debug_dataloader
 
-        self.f_maps = list(getattr(model_config, "f_maps", [32, 64, 128, 256]))
-        self.num_levels = int(getattr(model_config, "n_levels", 6))
+        #self.f_maps = list(getattr(model_config, "f_maps", [32, 64, 128, 256]))
+
+        #if self.vram_max <= 8024:
+        #    self.patch_size = (128, 128, 128)
+        #    self.batch_size = 2
+
+        #if self.vram_max > 8024 and self.vram_max <= 16048:
+        #    self.patch_size = (192, 192, 192)
+        #    self.batch_size = 3
+
 
         self.tensorboard_log_dir = Path(self.tensorboard_log_dir) / self.model_name
 
@@ -93,22 +103,36 @@ class BaseTrainer:
         self.volume_paths = dataset_config.volume_paths
         self.tasks = dataset_config.targets
 
-        self.model_config = getattr(model_config, "model_config", {})
-        self.model_kwargs = vars(self.model_config).copy()
+        self.out_channels = ()
+        for task_name, task_info in self.tasks.items():
+            self.out_channels += (task_info["channels"],)
+
+        self.model_kwargs = vars(model_config).copy()
 
     # --- build model --- #
     def _build_model(self, model_kwargs):
-        if "basic_block" in model_kwargs:
-            basic_block = get_blocks(model_kwargs["basic_block"])
-            model_kwargs.pop("basic_block")
-            model_kwargs["basic_block"] = basic_block
 
-        model = MultiTaskConfigurable3dUNet(
-            self.tasks,
-            **model_kwargs
+        builder = BuildNetworkFromConfig(
+            tasks=self.tasks,
+            patch_size=self.patch_size,
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            batch_size=self.batch_size,
+            vram_target=self.vram_max,
+            autoconfigure=self.autoconfigure,
+            **model_kwargs,
         )
 
-        model.printconfig()
+        vram = builder.estimate_vram_usage()
+        print(f"Estimated vram usage for this model with your configs: {vram} MB")
+        if vram > self.vram_max:
+            print(f"Estimated vram use of {vram} is greater than the vram max set in your config. Exiting. Please adjust your config accordingly.")
+            return
+
+        model = builder.build()
+
+        model.print_config()
+
         return model
 
     # --- configure dataset --- #
@@ -269,8 +293,9 @@ class BaseTrainer:
                 if i >= self.max_steps_per_epoch:
                     break
 
-                if i == 0:
+                if epoch == 0 and i == 0:
                     for item in data_dict:
+                        print(f"Items from the first batch -- Double check that your shapes and values are expected:")
                         print(f"{item}: {data_dict[item].dtype}")
                         print(f"{item}: {data_dict[item].shape}")
                         print(f"{item}: min : {data_dict[item].min()} max : {data_dict[item].max()}")
