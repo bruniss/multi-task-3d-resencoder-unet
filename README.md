@@ -23,6 +23,9 @@ the primary method for configuring the model is through a yaml file provided as 
 
 most of these fields are optional. this is an example yaml file 
 
+```yaml
+# YOU DO NOT HAVE TO PROVIDE VALUES IN MOST OF THESE FIELDS
+
 tr_params:
   model_name: ink             # required [str] this is the name your model will checkpoint will be saved as
   vram_max: 22000             # required if autoconfigure is true, else optional-- the amount in MB you want the model to use
@@ -154,4 +157,4 @@ inference_params:
       channels: 1
       activation: "none"
       weight: 1
-
+```
