@@ -2,7 +2,13 @@ this repository contains training and inference scripts for a dynamically create
 
 the model can learn both segmentation and regression tasks simultaneously, and can accept an arbitrary number of inputs and target labels. currently the only supported data format is zarr. 
 
-there is only 1 model type currently implemented, but adding additional support is trivial and something i will do soon. currently the model only supports a shared encoder path with separate decoder heads/paths. 
+currently all of the 3d blocks from pytorch3dunet are implemented, but adding additional support is trivial and something i will do soon. currently the model only supports a shared encoder path with separate decoder heads/paths. 
+
+i'm adding to this frequently, so more will come. the design im going for is very much inspired by nnunet (it would probably make more sense to just extend nnunet but wheres the fun in that). it borrows heavily from pytorch3dunet, and all of the building blocks are from there. i am very grateful to both of these development teams/individuals for sharing and developing these frameworks :) 
+
+https://github.com/MIC-DKFZ/nnUNet
+
+https://github.com/wolny/pytorch-3dunet
 
 ___
 ## purpose
@@ -15,7 +21,7 @@ the primary focus of creating this was to enable efficient multi-task learning w
 
 **surface normal rotations/flips**: includes augmentations to apply proper rotation and flipping for surface normals along with other targets
 
-**a clear dataset and train path**: all data is stored in dictionaries where the key is the name of your provided target. this makes extending or modifying relatively easy, and even someone without much python experience should be able to follow what is happening in each stage.
+**easy extension** : the primary train setup is run through methods of a base trainer class, so any part can be swapped out quickly by subclassing the parent and overriding the method. 
 
 ___
 ## configuration
