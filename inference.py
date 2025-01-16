@@ -11,7 +11,7 @@ import yaml
 import torch
 from torch.utils.data import DataLoader
 from collections import defaultdict
-from pytorch3dunet.unet3d.model import MultiTaskResidualUNetSE3D
+from builders.build_network_from_config import BuildNetworkFromConfig
 from helpers import get_overlapping_chunks
 
 from dataloading.inference_dataset import InferenceDataset
@@ -45,23 +45,50 @@ class ZarrInferenceHandler:
         self.output_targets = list(getattr(inference_params, "output_targets", "all"))
         self.overlap = float(getattr(inference_params, "overlap", 0.25))
         self.targets = getattr(inference_params, "targets", {})
-
+        self.vram_max = float(getattr(tr_params, "vram_max", 12.0))
+        self.autoconfigure = bool(getattr(tr_params, "autoconfigure", False))
         self.output_dir = str(getattr(inference_params, "output_dir", "./"))
         self.write_layers = write_layers
         self.volume_paths = dataset_config.volume_paths
         self.inference_targets = inference_params.targets
-
+        self.in_channels = int(getattr(dataset_config, "in_channels", 1))
         os.makedirs(self.output_dir, exist_ok=True)
+        self.tasks = dataset_config.targets
+        self.out_channels = ()
+        for task_name, task_info in self.tasks.items():
+            self.out_channels += (task_info["channels"],)
 
-    def infer(self):
-        torch.set_float32_matmul_precision('high')
-        model = MultiTaskResidualUNetSE3D(
-            in_channels=1,
-            tasks=self.inference_targets,
-            f_maps=self.f_maps,
-            num_levels=self.num_levels
+        self.model_kwargs = vars(model_config).copy()
+
+    def _build_model(self, model_kwargs):
+
+        builder = BuildNetworkFromConfig(
+            tasks=self.tasks,
+            patch_size=self.patch_size,
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            batch_size=self.batch_size,
+            vram_target=self.vram_max,
+            autoconfigure=self.autoconfigure,
+            **model_kwargs,
         )
 
+        vram = builder.estimate_vram_usage()
+        print(f"Estimated vram usage for this model with your configs: {vram} MB")
+        if vram > self.vram_max:
+            print(f"Estimated vram use of {vram} is greater than the vram max set in your config. Exiting. Please adjust your config accordingly.")
+            return
+
+        model = builder.build()
+
+        model.print_config()
+
+        return model
+
+    def infer(self):
+
+        model = self._build_model(self.model_kwargs)
+        torch.set_float32_matmul_precision('high')
         device = torch.device('cuda')
         model = torch.compile(model)
         model = model.to(device)

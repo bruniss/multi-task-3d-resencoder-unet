@@ -113,9 +113,10 @@ dataset_config:
         beta: 0.5
 
 inference_params:
-  patch_size: [14, 256, 256] # optional - patch size to use for inference. this can be different than what you trained with, but might hurt performance
+  patch_size: [14, 128, 128] # optional - patch size to use for inference. this can be different than what you trained with, but might hurt performance
   batch_size: 8              # optional - this typically can be larger for inference than training
-  checkpoint_path: "/mnt/raid_hdd/models/ink/ink_352.pth" # the checkpoint to load
+  checkpoint_path: "/mnt/raid_hdd/models/ink/ink_65.pth" # the checkpoint to load
+
   num_dataloader_workers: 12
   input_path: "/home/sean/Desktop/s1_segments/3852/3852.zarr/layers.zarr" # [str] input volume, CURRENTLY MUST BE ZARR
   input_format: "zarr" # not currently implemented, all data is saved to zarr in the output dir as predictions.zarr
