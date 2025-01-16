@@ -53,15 +53,15 @@ class ZarrSegmentationDataset3D(Dataset):
         for vol_idx, vol_info in enumerate(volume_paths):
             # open input
             input_zarr = zarr.open(vol_info["input"], mode='r')
-            if input_zarr.shape[0] < patch_size.shape[0]:
-                raise ValueError(f"Input volume {vol_idx} has 'z' dimension smaller than patch size. "
-                                 f"Please decrease the patch size or increase the input volume size. ")
-            if input_zarr.shape[1] < patch_size.shape[1]:
-                raise ValueError(f"Input volume {vol_idx} has 'y' dimension smaller than patch size."
-                                 f"Please decrease the patch size or increase the input volume size. ")
-            if input_zarr.shape[2] < patch_size.shape[2]:
-                raise ValueError(f"Input volume {vol_idx} has 'x' dimension smaller than patch size."
-                                 f"Please decrease the patch size or increase the input volume size. ")
+            # if input_zarr.shape[0] < patch_size.shape[0]:
+            #     raise ValueError(f"Input volume {vol_idx} has 'z' dimension smaller than patch size. "
+            #                      f"Please decrease the patch size or increase the input volume size. ")
+            # if input_zarr.shape[1] < patch_size.shape[1]:
+            #     raise ValueError(f"Input volume {vol_idx} has 'y' dimension smaller than patch size."
+            #                      f"Please decrease the patch size or increase the input volume size. ")
+            # if input_zarr.shape[2] < patch_size.shape[2]:
+            #     raise ValueError(f"Input volume {vol_idx} has 'x' dimension smaller than patch size."
+            #                      f"Please decrease the patch size or increase the input volume size. ")
 
             # open each target for the tasks we care about
             target_arrays = {}
@@ -200,7 +200,7 @@ class ZarrSegmentationDataset3D(Dataset):
             # illumination
             A.OneOf([
                 A.RandomBrightnessContrast(),
-                #A.Illumination(),
+                A.Illumination(),
             ], p=0.3),
 
             # noise

@@ -8,93 +8,125 @@ ___
 ## purpose
 the primary focus of creating this was to enable efficient multi-task learning with 3d unets. i am not a particularly skilled or experience programmer nor am i a machine learning expert by any stretch of the imagination, no guarantees for performance!
 
-### main features
-**self configuring encoder/decoder paths**: provided a config with inputs and channels, the model will automatically create the required paths and select some defaults for loss
+### design
+the repository is setup with a focus on modularity -- the two scripts train.py and inference.py are the entry points, and these are configured through the use of a configuration manager class (aptly named ConfigManager) which parses the configuration yaml and assigns the items to their respective fields.
 
-**automatic patch finding**: provided with a reference labeled zarr array, the dataset will find patches that meet the requirements for both volumetric size within the patch and label density within it. this allows for passing gigantic but relatively sparsely labeled datasets and only performing training on the areas which are densely labeled. this list is then saved to a json so you will not have to run this computation again, provided your patch size has not changed.
+each step of the training configuration is handled by methods of the BaseTrainer class -- the model train script runs in this order:
+1. The script is started with `python train.py --config_path ./tasks/task.yaml` . 
+2. The `ConfigManager` class is instantiated with this config file path, and parses the file, assigning the contents to the appropriate properies, and using reasonable defaults when none are provided. 
+2. `_build_model` creates a model from the configurations provided by the ConfigManager, and prints its configuration
+3. `_configure_dataset` receives the patch size, task list, label ratios, and other arguments from the ConfigManager and creates a Zarr dataset. 
+   4. It searches through a chosen reference zarr for regions of patch size that contain some parameters for label volume and density, and assigns these to valid patches 
+   5. These valid patches are gathered from the indices and passed through to `__getitem__`
+   5. Some augmentations are performed and the data is converted to torch tensors with shape (c, z, y, x), dtype of float32, and values between 0 and 1
+   6. This data now in pytorch compatible format is returned to the training script
+7. `_build_loss` receives the loss classes from ConfigManager, finds it among the string to class mapping defined in the function, and assigns each loss to each task
+8. `_get_optimizer` receives the optimizer from the ConfigManager, and sets it as the optimizer for this run
+9. `_get_scheduler` receives the scheduler class from the ConfigManager, and assigns the correct class from the mapping defined in the function
+10. `_configure_dataloaders` receives the batch size and num_workers from the ConfigurationManager and instantiates the training and validation dataloaders
+11. Gradient accumulation steps are sent from the ConfigManager
+12. If a checkpoint is provided, the weights are loaded along with the optimizer, scheduler state, and epoch number. If weights only is set by the ConfigManager, only the weights are loaded and training is begun at epoch 0 with a fresh optimizer and scheduler.
+11. The training loop is began - 
+    12. For each item in `data_dict` (this is a dictionary returned by the dataset that contains all images and labels):
+        13. If it's the first batch, the script prints off the shape, dtype, and min/max values contained
+        14. The item named 'image' in the data_dict is sent to the device
+        15. Each other item in the `data_dict`, which we assume are all labels, are sent to the device -- these are stored in the `targets_dict`, by key(name) and item(data)
+        16. The outputs of the model are received
+    16. For each item in the targets_dict, the loss is computed
+    17. The gradients are sent back 
+    18. The weights are updated
+    19. The checkpoint is saved
+19. Validation is performed, following the same steps save updating the weights or gradients. Loss is still computed for metrics. 
+20. A gif is saved in the directory set by the ConfigManager containing the raw data, and each targets label/prediction pair
+21. The next epoch is started 
 
-**surface normal rotations/flips**: includes augmentations to apply proper rotation and flipping for surface normals along with other targets
-
-**a clear dataset and train path**: all data is stored in dictionaries where the key is the name of your provided target. this makes extending or modifying relatively easy, and even someone without much python experience should be able to follow what is happening in each stage.
-
+Outside the training loop itself, each part is easily extendable or replaceable by subclassing the appropriate method. If you wanted to use different losses, you could add them to the mapping, or simply create a new training script, subclass the BaseTrainer with something like DifferentLossTrainer and then define only `_get_loss`, replacing the current method with whatever you want. So long as your loss can accept tensors of shape `b, c, z, y, x` , you have nothing else to do. 
 ___
+
 ## configuration
-the primary method for configuring the model is through a json file provided as an argument. an example json is in the tasks folder. the json has the following parameters (do not use the type hinting, its only there to let you know what to provide):
+the training and validation are configured through a class called `ConfigManager`. This class parses a yaml file, an example of which is in the tasks folder. each of the following properties are set if provided, with some defaults selected if they are not contained in the config file. if you want to add a configuration, just put it in the yaml, and assign the property here-- you can now access it with the ConfigManager anywhere in training, inference, or within the dataset.
+
+not all of properties defined here are currently in use -- this is a fun side project for me that i am actively working on. 
+```python
+
+from types import SimpleNamespace
+from pathlib import Path
+import yaml
+
+class ConfigManager:
+    def __init__(self, config_path):
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+
+        self.tr_info = SimpleNamespace(**config["tr_setup"])
+        self.tr_configs = SimpleNamespace(**config["tr_config"])
+        self.model_config = SimpleNamespace(**config["model_config"])
+        self.dataset_config = SimpleNamespace(**config["dataset_config"])
+        self.inference_config = SimpleNamespace(**config["inference_config"])
+
+        # training setup
+        self.model_name = getattr(self.tr_info, "model_name", "Model")
+        self.vram_max = float(getattr(self.tr_info, "vram_max", 16))
+        self.autoconfigure = bool(getattr(self.tr_info, "autoconfigure", True))
+        self.tr_val_split = float(getattr(self.tr_info, "tr_val_split", 0.95))
+        self.dilate_label = bool(getattr(self.tr_info, "dilate_label", False))
+        self.ckpt_out_base = Path(getattr(self.tr_info, "ckpt_out_base", "./checkpoints/"))
+        self.checkpoint_path = getattr(self.tr_info, "checkpoint_path", None)
+        self.load_weights_only = getattr(self.tr_info, "load_weights_only", False)
+        self.tensorboard_log_dir = str(getattr(self.tr_info, "tensorboard_log_dir", "./tensorboard_logs/"))
+
+        # parameters for training
+        self.loss_only_on_label = bool(getattr(self.tr_configs, "loss_only_on_label", False))
+        self.train_patch_size = tuple(getattr(self.tr_configs, "patch_size", [192, 192, 192]))
+        self.train_batch_size = int(getattr(self.tr_configs, "batch_size", 2))
+        self.gradient_accumulation = int(getattr(self.tr_configs, "gradient_accumulation", 1))
+        self.optimizer = str(getattr(self.tr_configs, "optimizer", "AdamW"))
+        self.ignore_label = getattr(self.tr_configs, "ignore_label", None)
+        self.max_steps_per_epoch = int(getattr(self.tr_configs, "max_steps_per_epoch", 500))
+        self.max_val_steps_per_epoch = int(getattr(self.tr_configs, "max_val_steps_per_epoch", 25))
+        self.train_num_dataloader_workers = int(getattr(self.tr_configs, "num_dataloader_workers", 4))
+        self.label_smoothing = float(getattr(self.tr_configs, "label_smoothing", 0.2))
+        self.max_epoch = int(getattr(self.tr_configs, "max_epoch", 500))
+        self.initial_lr = float(getattr(self.tr_configs, "initial_lr", 1e-3))
+        self.weight_decay = float(getattr(self.tr_configs, "weight_decay", 0))
+        self.tensorboard_log_dir = Path(self.tensorboard_log_dir) / self.model_name
+
+        # model configuration -- no defaults here because it's handled by build_network_from_config dynamically
+        self.model_kwargs = vars(self.model_config).copy()
+
+        # dataset config
+        self.min_labeled_ratio = float(getattr(self.dataset_config, "min_labeled_ratio", 0.1))
+        self.min_bbox_percent = float(getattr(self.dataset_config, "min_bbox_percent", 0.95))
+        self.use_cache = bool(getattr(self.dataset_config, "use_cache", True))
+        self.cache_file = Path((getattr(self.dataset_config, "cache_file", 'valid_patches.json')))
+        self.in_channels = int(getattr(self.dataset_config, "in_channels", 1))
+        self.tasks = self.dataset_config.targets
+        self.volume_paths = self.dataset_config.volume_paths
+        self.out_channels = ()
+        for task_name, task_info in self.tasks.items():
+            self.out_channels += (task_info["channels"],)
+
+        # inference config
+        self.infer_input_path = str(getattr(self.inference_config, "input_path", None))
+        self.infer_input_format = str(getattr(self.inference_config, "input_format", "zarr"))
+        self.infer_output_format = str(getattr(self.inference_config, "output_format", "zarr"))
+        self.infer_load_all = bool(getattr(self.inference_config, "load_all", False))
+        self.infer_output_dtype = str(getattr(self.inference_config, "output_type", "np.uint8"))
+        self.infer_output_targets = list(getattr(self.inference_config, "output_targets", "all"))
+        self.infer_overlap = float(getattr(self.inference_config, "overlap", 0.15))
+        self.infer_blending = str(getattr(self.inference_config, "blending", "gaussian_importance"))
+        self.infer_patch_size = tuple(getattr(self.inference_config, "patch_size", self.train_patch_size))
+        self.infer_batch_size = int(getattr(self.inference_config, "batch_size", self.train_batch_size))
+        self.infer_checkpoint_path = getattr(self.inference_config, "checkpoint_path", None)
+        self.load_strict = bool(getattr(self.inference_config, "load_strict", True))
+        self.infer_num_dataloader_workers = int(getattr(self.inference_config, "num_dataloader_workers", self.train_num_dataloader_workers))
+
+        if self.checkpoint_path is not None:
+            self.checkpoint_path = Path(self.checkpoint_path)
+        else:
+            self.checkpoint_path = None
+
+```
 
 
-### tr_params
-
-- **model_name**: `SheetNorm`  - [str] the name the checkpoint will be saved as 
-- **patch_size**: `[64, 192, 192]` - [tuple] patch size, in (z, y, x)
-- **batch_size**: `4`  [int]
-- **tr_val_split**: `0.80` - [float] the split the dataloader will apply to your patches
-- **ignore_label**: `null` - [bool] NOT YET IMPLEMENTED
-- **loss_only_on_label**: `false` - [bool] only implemented for cosine loss currently
-- **dilate_label**: `false` - [bool] will dilate the label by the amount set in the dataset.py
-- **label_smoothing**: `0.1` - [float] soften the loss on your labels, as a percentage
-- **initial_lr**: `0.001` [float]
-- **weight_decay**: `0.0001` [float]
-- **max_steps_per_epoch**: `500` - [int] the number of batches sent through the model each epoch
-- **max_val_steps_per_epoch**: `25` - [int] the same as above but for validation
-- **max_epoch**: `500` - [int] when to stop training
-- **gradient_accumulation**: `1` - [int] accumulate gradients to simulate higher batch sizes. 1 is same as none.
-- **checkpoint_path**: `/mnt/raid_hdd/models/normals/checkpoints/SheetNorm_325.pth` - [str] the path to a pretrained checkpoint you can resume training from. 
-- **load_weights_only**: `true` - [bool] will only load the model weights , if specified you will begin training at epoch 0 with reset LR
-- **ckpt_out_base**: `/mnt/raid_hdd/models/normals/checkpoints/augs_and_s4` - [str] base folder for checkpoint saving
-- **optimizer**: `AdamW` - [str] can also be SGD
-- **num_dataloader_workers**: `4` [int] - number of workers for the pytorch dataloader
-- **tensorboard_log_dir**: `/home/sean/Desktop/tensorboard` - [str] destination folder for tensorboard logs  
-
----
-
-### inference_params
-these will only be applied on inference. during training none of these are used. 
-- **patch_size**: `[64, 192, 192]` - [tuple] patch size for inference, (z,y,x)
-- **batch_size**: `4` 
-- **checkpoint_path**: `/mnt/raid_hdd/models/normals/checkpoints/SheetNorm_301.pth` - [str] - checkpoint to use for inference
-- **num_dataloader_workers**: `4` 
-- **input_path**: `/mnt/raid_nvme/s4.zarr` - [str] path for inference zarr
-- **input_format**: `zarr` - only zarr currently supported
-- **output_dir**: `/mnt/raid_nvme/inference_out` [str] path to output zarrs 
-- **output_format**: `zarr` 
-- **output_type**: `np.uint8` - [str] - dtype of output zar
-- **output_targets**: `["sheet", "normals"]` - **currently not needed, inference outputs all targets**
-- **overlap**: `0.25` - [float] the overlap between patches, used to avoid edge artifacts
-
----
-
-### model_config
-
-- **f_maps**: `[32, 64, 128, 256, 320, 528]` - [tuple] the number of feature maps at each level *must contain an amount equal to your num_levels*. if you num_levels is 6, put 6 numbers in here
-- **num_levels**: `6` - [int] the number of levels for downsampling/upsample in the model. each scales up or down by 2, so if your patch size is small enough that it will end up being smaller than the number of levels that can be divided by two, you will get an error 
-
-
----
-
-### dataset_config
-
-- **min_bbox_percent**: `0.95` - [float] - the amount of the patch that a bbox containing _all the labels_ must encompass, as a percentage
-- **min_labeled_ratio**: `0.07` - [float] - the amount of pixels within the above bbox that must contain nonzero values
-- **use_cache**: `true` - [bool] after computing patches (which can take a while), will save a json with the starting positions of all valid patches, so you don't have to find them again
-- **cache_file**: `/home/sean/Documents/GitHub/VC-Surface-Models/models/64_192_192_patch_cache_ands4.json` - [str] a path to precomputed valid patches
-- **normalization**: `ct_normalization` - *not yet implemented*, currently zscore standardization is applied to image only  
-
-### volume_paths
-You can provide an arbitrary number of inputs and targets for each input. the model will automatically create decoder paths for the provided target label paths. if you have a target label here, you must have a target defined below it.
-  - **input**: `/mnt/raid_nvme/s1.zarr` - [str] this is the path to the _raw input data_ for the associated targets
-  - **sheet**: `/mnt/raid_nvme/datasets/1-voxel-sheet_slices-closed.zarr/0.zarr` - [str] this is a path to a set of labels for the above raw input data
-  - **normals**: `/home/sean/Documents/GitHub/VC-Surface-Models/models/normals.zarr` - [str] this is a path to another set of labels for the input above
-  - **ref_label**: `sheet` - [str] this is the label we will use to find valid patches. in this setup, we will use the "sheet" volume referenced above
-
-### targets
-you must provide the number of channels for each target. weight and activation are optional. if none are provided each target will be weighed equally and have no activation applied to it
-- **sheet**:
-  - **channels**: `1` - [int] - number of input _and_ output channels of the target
-  - **activation**: `none`[str] - activation type of the final layer - options are none, sigmoid, and softmax
-  - **weight**: `1` - [int] the weight to be applied during loss calculation. this will be multiplied by the loss, so 1 is equal to no change. some experimentation here is needed, as different losses output different scales of loss, so you will need to adjust this for your task/loss  
-
-- **normals**: 
-  - **channels**: `3` - note how this has 3 channels, this means that the normals zarr above _must also have 3 channels_ , but the raw input volume does not 
-  - **activation**: `none`
-  - **weight**: `0.75` - the loss for this will be multiplied by .75, effectively reducing its loss contribution by 1/4. the cosine loss i use outputs numbers higher than the loss i use for the sheet, so i reduce this ones contribution to prevent this loss from dominating
 
