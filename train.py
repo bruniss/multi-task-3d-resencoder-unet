@@ -1,12 +1,10 @@
 import os
 from pathlib import Path
 import yaml
-from types import SimpleNamespace
+
 from tqdm import tqdm
 import numpy as np
-from builders.basic_model import MultiTaskConfigurable3dUNet
-from pytorch3dunet.augment.transforms import Standardize
-
+import logging
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim import AdamW, SGD
@@ -18,119 +16,23 @@ from visualization.plotting import save_debug_gif,log_3d_slices_as_images, debug
 from builders.build_network_from_config import BuildNetworkFromConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
 from losses.losses import MaskedCosineLoss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
+from configuration.config_manager import ConfigManager
+
 
 class BaseTrainer:
-    """
-            model_name: what you want the model to be called, and what the epochs are saved as
-            patch_size: size of the patches to be cropped from the volume
-            f_maps: number of feature maps in each level of the UNet
-            n_levels: number of levels in the UNet
-            ignore_label: value in the label volume that we will not compute losses against
-            loss_only_on_label: if True, only compute loss against labeled regions
-            label_smoothing: soften the loss on the label by a percentage
-            min_labeled_ratio: minimum ratio of labeled pixels in a patch to be considered valid
-            min_bbox_percent: minimum area a bounding box containing _all_ the labels must occupy, as a percentage of the patch size
-            use_cache: if True, use a cache file to save the valid patches so you dont have to recompute
-            cache_file: path to the cache file, if it exists, and also the path the new one will save to
-            tasks: dictionary of tasks to be used in the model, each task must contain the number of channels and the activation type
-            """
-
     def __init__(self,
                  config_file: str,
+                 verbose: bool = True,
                  debug_dataloader: bool = False):
-        with open(config_file, "r") as f:
-            config = yaml.safe_load(f)
 
-        tr_params = SimpleNamespace(**config["tr_params"])
-        model_config = SimpleNamespace(**config["model_config"])
-        dataset_config = SimpleNamespace(**config["dataset_config"])
-
-
-        # --- configs --- #
-        self.model_name = getattr(tr_params, "model_name", "SheetNorm")
-        self.vram_max = float(getattr(tr_params, "vram_max", 16))
-        self.autoconfigure = bool(getattr(tr_params, "autoconfigure", True))
-        self.patch_size = tuple(getattr(tr_params, "patch_size", [192, 192, 192]))
-        self.batch_size = int(getattr(tr_params, "batch_size", 2))
-        self.gradient_accumulation = int(getattr(tr_params, "gradient_accumulation", 1))
-        self.optimizer = str(getattr(tr_params, "optimizer", "AdamW"))
-        self.tr_val_split = float(getattr(tr_params, "tr_val_split", 0.95))
-        self.ignore_label = getattr(tr_params, "ignore_label", None)
-        self.dilate_label = bool(getattr(tr_params, "dilate_label", False))
-        self.loss_only_on_label = bool(getattr(tr_params, "loss_only_on_label", False))
-        self.label_smoothing = float(getattr(tr_params, "label_smoothing", 0.2))
-        self.max_epoch = int(getattr(tr_params, "max_epoch", 500))
-        self.initial_lr = float(getattr(tr_params, "initial_lr", 1e-3))
-        self.weight_decay = float(getattr(tr_params, "weight_decay", 1e-4))
-        self.ckpt_out_base = Path(getattr(tr_params, "ckpt_out_base", "./checkpoints/"))
-        self.checkpoint_path = getattr(tr_params, "checkpoint_path", None)
-        self.load_weights_only = getattr(tr_params, "load_weights_only", False)
-        self.max_steps_per_epoch = int(getattr(tr_params, "max_steps_per_epoch", 500))
-        self.max_val_steps_per_epoch = int(getattr(tr_params, "max_val_steps_per_epoch", 25))
-        self.num_dataloader_workers = int(getattr(tr_params, "num_dataloader_workers", 4))
-        self.tensorboard_log_dir = str(getattr(tr_params, "tensorboard_log_dir", "./tensorboard_logs/"))
-
-        self.min_labeled_ratio = float(getattr(dataset_config, "min_labeled_ratio", 0.1))
-        self.min_bbox_percent = float(getattr(dataset_config, "min_bbox_percent", 0.95))
-        self.use_cache = bool(getattr(dataset_config, "use_cache", True))
-        self.cache_file = Path((getattr(dataset_config, "cache_file",'valid_patches.json')))
-        self.in_channels = int(getattr(dataset_config, "in_channels", 1))
-
+        self.mgr = ConfigManager(config_file)
         self.debug_dataloader = debug_dataloader
 
-        #self.f_maps = list(getattr(model_config, "f_maps", [32, 64, 128, 256]))
-
-        #if self.vram_max <= 8024:
-        #    self.patch_size = (128, 128, 128)
-        #    self.batch_size = 2
-
-        #if self.vram_max > 8024 and self.vram_max <= 16048:
-        #    self.patch_size = (192, 192, 192)
-        #    self.batch_size = 3
-
-
-        self.tensorboard_log_dir = Path(self.tensorboard_log_dir) / self.model_name
-
-        self.normalization = Standardize(channelwise=False)
-
-        if self.checkpoint_path is not None:
-            self.checkpoint_path = Path(self.checkpoint_path)
-        else:
-            self.checkpoint_path = None
-
-        os.makedirs(self.ckpt_out_base, exist_ok=True)
-
-        self.volume_paths = dataset_config.volume_paths
-        self.tasks = dataset_config.targets
-
-        self.out_channels = ()
-        for task_name, task_info in self.tasks.items():
-            self.out_channels += (task_info["channels"],)
-
-        self.model_kwargs = vars(model_config).copy()
-
     # --- build model --- #
-    def _build_model(self, model_kwargs):
+    def _build_model(self):
 
-        builder = BuildNetworkFromConfig(
-            tasks=self.tasks,
-            patch_size=self.patch_size,
-            in_channels=self.in_channels,
-            out_channels=self.out_channels,
-            batch_size=self.batch_size,
-            vram_target=self.vram_max,
-            autoconfigure=self.autoconfigure,
-            **model_kwargs,
-        )
-
-        vram = builder.estimate_vram_usage()
-        print(f"Estimated vram usage for this model with your configs: {vram} MB")
-        if vram > self.vram_max:
-            print(f"Estimated vram use of {vram} is greater than the vram max set in your config. Exiting. Please adjust your config accordingly.")
-            return
-
+        builder = BuildNetworkFromConfig(self.mgr)
         model = builder.build()
-
         model.print_config()
 
         return model
@@ -138,16 +40,15 @@ class BaseTrainer:
     # --- configure dataset --- #
     def _configure_dataset(self):
         dataset = ZarrSegmentationDataset3D(
-            volume_paths=self.volume_paths,
-            tasks=self.tasks,
-            patch_size=self.patch_size,
-            min_labeled_ratio=self.min_labeled_ratio,
-            min_bbox_percent=self.min_bbox_percent,
-            normalization=self.normalization,
-            dilate_label=False,
+            volume_paths=self.mgr.volume_paths,
+            tasks=self.mgr.tasks,
+            patch_size=self.mgr.train_patch_size,
+            min_labeled_ratio=self.mgr.min_labeled_ratio,
+            min_bbox_percent=self.mgr.min_bbox_percent,
+            dilate_label=self.mgr.dilate_label,
             transforms=None,
-            use_cache=self.use_cache,
-            cache_file=Path(self.cache_file)
+            use_cache=self.mgr.use_cache,
+            cache_file=Path(self.mgr.cache_file)
         )
 
         return dataset
@@ -169,7 +70,7 @@ class BaseTrainer:
         }
 
         loss_fns = {}
-        for task_name, task_info in self.tasks.items():
+        for task_name, task_info in self.mgr.tasks.items():
             loss_fn = task_info.get("loss_fn", "BCEDiceLoss")
             if loss_fn not in LOSS_FN_MAP:
                 raise ValueError(f"Loss function {loss_fn} not found in LOSS_FN_MAP. Add it to the mapping and try again.")
@@ -180,26 +81,26 @@ class BaseTrainer:
 
     # --- optimizer ---- #
     def _get_optimizer(self, model):
-        if self.optimizer == "SGD":
+        if self.mgr.optimizer == "SGD":
             optimizer = SGD(
                 model.parameters(),
-                lr=self.initial_lr,
+                lr=self.mgr.initial_lr,
                 momentum=0.9,
                 nesterov=True,
-                weight_decay=self.weight_decay
+                weight_decay=self.mgr.weight_decay
             )
         else:
             optimizer = AdamW(
                 model.parameters(),
-                lr=self.initial_lr,
-                weight_decay=self.weight_decay
+                lr=self.mgr.initial_lr,
+                weight_decay=self.mgr.weight_decay
             )
         return optimizer
 
     # --- scheduler --- #
     def _get_scheduler(self, optimizer):
         scheduler = CosineAnnealingLR(optimizer,
-                                      T_max=self.max_epoch,
+                                      T_max=self.mgr.max_epoch,
                                       eta_min=0)
         return scheduler
 
@@ -214,27 +115,27 @@ class BaseTrainer:
         indices = list(range(dataset_size))
         np.random.shuffle(indices)
 
-        train_val_split = self.tr_val_split
+        train_val_split = self.mgr.tr_val_split
         split = int(np.floor(train_val_split * dataset_size))
         train_indices, val_indices = indices[:split], indices[split:]
-        batch_size = self.batch_size
+        batch_size = self.mgr.train_batch_size
 
         train_dataloader = DataLoader(dataset,
                                 batch_size=batch_size,
                                 sampler=SubsetRandomSampler(train_indices),
                                 pin_memory=True,
-                                num_workers=self.num_dataloader_workers)
+                                num_workers=self.mgr.train_num_dataloader_workers)
         val_dataloader = DataLoader(dataset,
                                     batch_size=1,
                                     sampler=SubsetRandomSampler(val_indices),
                                     pin_memory=True,
-                                    num_workers=self.num_dataloader_workers)
+                                    num_workers=self.mgr.train_num_dataloader_workers)
 
         return train_dataloader, val_dataloader
 
     def train(self):
 
-        model = self._build_model(self.model_kwargs)
+        model = self._build_model()
         optimizer = self._get_optimizer(model)
         loss_fns = self._build_loss()
         dataset = self._configure_dataset()
@@ -258,14 +159,14 @@ class BaseTrainer:
 
         start_epoch = 0
 
-        if self.checkpoint_path is not None and Path(self.checkpoint_path).exists():
-            print(f"Loading checkpoint from {self.checkpoint_path}")
-            checkpoint = torch.load(self.checkpoint_path, map_location=device)
+        if self.mgr.checkpoint_path is not None and Path(self.mgr.checkpoint_path).exists():
+            print(f"Loading checkpoint from {self.mgr.checkpoint_path}")
+            checkpoint = torch.load(self.mgr.checkpoint_path, map_location=device)
 
             # Always load model weights
             model.load_state_dict(checkpoint['model'])
 
-            if not self.load_weights_only:
+            if not self.mgr.load_weights_only:
                 # Only load optimizer, scheduler, epoch if we are NOT in "weights_only" mode
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 scheduler.load_state_dict(checkpoint['scheduler'])
@@ -277,20 +178,20 @@ class BaseTrainer:
                 scheduler = self._get_scheduler(optimizer)
                 print("Loaded model weights only; starting new training run from epoch 1.")
 
-        writer = SummaryWriter(log_dir=self.tensorboard_log_dir)
+        writer = SummaryWriter(log_dir=self.mgr.tensorboard_log_dir)
         global_step = 0
-        grad_accumulate_n = self.gradient_accumulation
+        grad_accumulate_n = self.mgr.gradient_accumulation
 
         # ---- training! ----- #
-        for epoch in range(start_epoch, self.max_epoch):
+        for epoch in range(start_epoch, self.mgr.max_epoch):
             model.train()
 
-            train_running_losses = {t_name: 0.0 for t_name in self.tasks}
-            pbar = tqdm(enumerate(train_dataloader), total=self.max_steps_per_epoch)
+            train_running_losses = {t_name: 0.0 for t_name in self.mgr.tasks}
+            pbar = tqdm(enumerate(train_dataloader), total=self.mgr.max_steps_per_epoch)
             steps = 0
 
             for i, data_dict in pbar:
-                if i >= self.max_steps_per_epoch:
+                if i >= self.mgr.max_steps_per_epoch:
                     break
 
                 if epoch == 0 and i == 0:
@@ -318,7 +219,7 @@ class BaseTrainer:
                     for t_name, t_gt in targets_dict.items():
                         t_pred = outputs[t_name]
                         t_loss_fn = loss_fns[t_name]
-                        task_weight = self.tasks[t_name].get("weight", 1.0)
+                        task_weight = self.mgr.tasks[t_name].get("weight", 1.0)
                         t_loss = t_loss_fn(t_pred, t_gt) * task_weight
 
                         total_loss += t_loss
@@ -342,7 +243,7 @@ class BaseTrainer:
                 steps += 1
 
                 desc_parts = []
-                for t_name in self.tasks:
+                for t_name in self.mgr.tasks:
                     avg_t_loss = train_running_losses[t_name] / steps
                     desc_parts.append(f"{t_name}: {avg_t_loss:.4f}")
 
@@ -351,7 +252,7 @@ class BaseTrainer:
 
             pbar.close()
 
-            for t_name in self.tasks:
+            for t_name in self.mgr.tasks:
                 epoch_avg = train_running_losses[t_name] / steps
                 writer.add_scalar(f"train/{t_name}_loss", epoch_avg, epoch)
             print(f"[Train] Epoch {epoch + 1} completed.")
@@ -361,11 +262,11 @@ class BaseTrainer:
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
                 'epoch': epoch
-            }, f"{self.ckpt_out_base}/{self.model_name}_{epoch + 1}.pth")
+            }, f"{self.mgr.ckpt_out_base}/{self.mgr.model_name}_{epoch + 1}.pth")
 
             # clean up old checkpoints -- currently just keeps 10 newest
             all_checkpoints = sorted(
-                self.ckpt_out_base.glob(f"{self.model_name}_*.pth"),
+                self.mgr.ckpt_out_base.glob(f"{self.mgr.model_name}_*.pth"),
                 key=lambda x: x.stat().st_mtime
             )
 
@@ -378,12 +279,12 @@ class BaseTrainer:
             if epoch % 1 == 0:
                 model.eval()
                 with torch.no_grad():
-                    val_running_losses = {t_name: 0.0 for t_name in self.tasks}
+                    val_running_losses = {t_name: 0.0 for t_name in self.mgr.tasks}
                     val_steps = 0
 
-                    pbar = tqdm(enumerate(val_dataloader), total=self.max_val_steps_per_epoch)
+                    pbar = tqdm(enumerate(val_dataloader), total=self.mgr.max_val_steps_per_epoch)
                     for i, data_dict in pbar:
-                        if i >= self.max_val_steps_per_epoch:
+                        if i >= self.mgr.max_val_steps_per_epoch:
                             break
 
                         inputs = data_dict["image"].to(device, dtype=torch.float32)
@@ -424,13 +325,13 @@ class BaseTrainer:
                                     input_volume=inputs_first,
                                     targets_dict=targets_dict_first,
                                     outputs_dict=outputs_dict_first,
-                                    tasks_dict=self.tasks, # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
+                                    tasks_dict=self.mgr.tasks, # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
                                     epoch=epoch,
-                                    save_path=f"{self.model_name}_debug.gif"
+                                    save_path=f"{self.mgr.model_name}_debug.gif"
                                 )
 
                     desc_parts = []
-                    for t_name in self.tasks:
+                    for t_name in self.mgr.tasks:
                         avg_loss_for_t = val_running_losses[t_name] / val_steps
                         desc_parts.append(f"{t_name} {avg_loss_for_t:.4f}")
                     desc_str = "Val: " + " | ".join(desc_parts)
@@ -439,23 +340,24 @@ class BaseTrainer:
                 pbar.close()
 
                 # Final avg for each task
-                for t_name in self.tasks:
+                for t_name in self.mgr.tasks:
                     val_avg = val_running_losses[t_name] / val_steps
                     print(f"Task '{t_name}', epoch {epoch + 1} avg val loss: {val_avg:.4f}")
 
             scheduler.step()
 
         print('Training Finished!')
-        torch.save(model.state_dict(), f'{self.model_name}_final.pth')
+        torch.save(model.state_dict(), f'{self.mgr.model_name}_final.pth')
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description="Train script for MultiTaskResidualUNetSE3D.")
+    parser = argparse.ArgumentParser(description="Train script for MultiTaskUnet.")
     parser.add_argument("--config_path", type=str, required=True, help="Path to your config file. Use the same one you used for training!")
     parser.add_argument("--debug_dataloader", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
-    trainer = BaseTrainer(args.config_path, args.debug_dataloader)
+    trainer = BaseTrainer(args.config_path, args.debug_dataloader, args.verbose)
     trainer.train()
 
 

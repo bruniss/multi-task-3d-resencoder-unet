@@ -28,9 +28,9 @@ class MultiTaskConfigurable3dUNet(nn.Module):
             self,
             in_channels: int,
             tasks: dict,  # e.g. {"sheet": {"channels": 1, "activation": "sigmoid"}, ...}
-            f_maps=[32, 64, 128, 256, 512],
-            basic_module=nnUNetStyleResNetBlockSE,
-            se_module=None,
+            f_maps=[32, 64, 128, 256, 320, 528],
+            basic_module=ResNetBlockSE,
+            se_module='scse',
             conv_kernel_size=3,
             conv_padding=1,
             conv_upscale=2,
