@@ -18,20 +18,32 @@ the primary focus of creating this was to enable efficient multi-task learning w
 the repository is setup with a focus on modularity -- the two scripts train.py and inference.py are the entry points, and these are configured through the use of a configuration manager class (aptly named ConfigManager) which parses the configuration yaml and assigns the items to their respective fields.
 
 each step of the training configuration is handled by methods of the BaseTrainer class -- the model train script runs in this order:
+
 1. The script is started with `python train.py --config_path ./tasks/task.yaml` . 
-2. The `ConfigManager` class is instantiated with this config file path, and parses the file, assigning the contents to the appropriate properies, and using reasonable defaults when none are provided. 
+
+2. The `ConfigManager` class is instantiated with this config file path, and parses the file, assigning the contents to the appropriate properies, and using reasonable defaults when none are provided.
+ 
 2. `_build_model` creates a model from the configurations provided by the ConfigManager, and prints its configuration
+
 3. `_configure_dataset` receives the patch size, task list, label ratios, and other arguments from the ConfigManager and creates a Zarr dataset. 
+
    4. It searches through a chosen reference zarr for regions of patch size that contain some parameters for label volume and density, and assigns these to valid patches 
    5. These valid patches are gathered from the indices and passed through to `__getitem__`
    5. Some augmentations are performed and the data is converted to torch tensors with shape (c, z, y, x), dtype of float32, and values between 0 and 1
    6. This data now in pytorch compatible format is returned to the training script
+
 7. `_build_loss` receives the loss classes from ConfigManager, finds it among the string to class mapping defined in the function, and assigns each loss to each task
+
 8. `_get_optimizer` receives the optimizer from the ConfigManager, and sets it as the optimizer for this run
+
 9. `_get_scheduler` receives the scheduler class from the ConfigManager, and assigns the correct class from the mapping defined in the function
+
 10. `_configure_dataloaders` receives the batch size and num_workers from the ConfigurationManager and instantiates the training and validation dataloaders
+
 11. Gradient accumulation steps are sent from the ConfigManager
+
 12. If a checkpoint is provided, the weights are loaded along with the optimizer, scheduler state, and epoch number. If weights only is set by the ConfigManager, only the weights are loaded and training is begun at epoch 0 with a fresh optimizer and scheduler.
+
 11. The training loop is began - 
     12. For each item in `data_dict` (this is a dictionary returned by the dataset that contains all images and labels):
         13. If it's the first batch, the script prints off the shape, dtype, and min/max values contained
@@ -42,8 +54,11 @@ each step of the training configuration is handled by methods of the BaseTrainer
     17. The gradients are sent back 
     18. The weights are updated
     19. The checkpoint is saved
+
 19. Validation is performed, following the same steps save updating the weights or gradients. Loss is still computed for metrics. 
+
 20. A gif is saved in the directory set by the ConfigManager containing the raw data, and each targets label/prediction pair
+
 21. The next epoch is started 
 
 Outside the training loop itself, each part is easily extendable or replaceable by subclassing the appropriate method. If you wanted to use different losses, you could add them to the mapping, or simply create a new training script, subclass the BaseTrainer with something like DifferentLossTrainer and then define only `_get_loss`, replacing the current method with whatever you want. So long as your loss can accept tensors of shape `b, c, z, y, x` , you have nothing else to do. 
