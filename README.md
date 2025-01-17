@@ -10,6 +10,9 @@ https://github.com/MIC-DKFZ/nnUNet
 
 https://github.com/wolny/pytorch-3dunet
 
+![image](https://github.com/user-attachments/assets/08f27dea-5b93-4b4d-a97f-b53bb6921cf3)
+
+
 ___
 ## purpose
 the primary focus of creating this was to enable efficient multi-task learning with 3d unets. i am not a particularly skilled or experience programmer nor am i a machine learning expert by any stretch of the imagination, no guarantees for performance!
