@@ -26,7 +26,6 @@ each step of the training configuration is handled by methods of the BaseTrainer
 2. `_build_model` creates a model from the configurations provided by the ConfigManager, and prints its configuration
 
 3. `_configure_dataset` receives the patch size, task list, label ratios, and other arguments from the ConfigManager and creates a Zarr dataset. 
-
    4. It searches through a chosen reference zarr for regions of patch size that contain some parameters for label volume and density, and assigns these to valid patches 
    5. These valid patches are gathered from the indices and passed through to `__getitem__`
    5. Some augmentations are performed and the data is converted to torch tensors with shape (c, z, y, x), dtype of float32, and values between 0 and 1
