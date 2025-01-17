@@ -26,10 +26,10 @@ each step of the training configuration is handled by methods of the BaseTrainer
 2. `_build_model` creates a model from the configurations provided by the ConfigManager, and prints its configuration
 
 3. `_configure_dataset` receives the patch size, task list, label ratios, and other arguments from the ConfigManager and creates a Zarr dataset. 
-   4. It searches through a chosen reference zarr for regions of patch size that contain some parameters for label volume and density, and assigns these to valid patches 
-   5. These valid patches are gathered from the indices and passed through to `__getitem__`
-   5. Some augmentations are performed and the data is converted to torch tensors with shape (c, z, y, x), dtype of float32, and values between 0 and 1
-   6. This data now in pytorch compatible format is returned to the training script
+   - It searches through a chosen reference zarr for regions of patch size that contain some parameters for label volume and density, and assigns these to valid patches 
+   - These valid patches are gathered from the indices and passed through to `__getitem__`
+   -  Some augmentations are performed and the data is converted to torch tensors with shape (c, z, y, x), dtype of float32, and values between 0 and 1
+   -  This data now in pytorch compatible format is returned to the training script
 
 7. `_build_loss` receives the loss classes from ConfigManager, finds it among the string to class mapping defined in the function, and assigns each loss to each task
 
@@ -43,16 +43,17 @@ each step of the training configuration is handled by methods of the BaseTrainer
 
 12. If a checkpoint is provided, the weights are loaded along with the optimizer, scheduler state, and epoch number. If weights only is set by the ConfigManager, only the weights are loaded and training is begun at epoch 0 with a fresh optimizer and scheduler.
 
-11. The training loop is began - 
-    12. For each item in `data_dict` (this is a dictionary returned by the dataset that contains all images and labels):
-        13. If it's the first batch, the script prints off the shape, dtype, and min/max values contained
-        14. The item named 'image' in the data_dict is sent to the device
-        15. Each other item in the `data_dict`, which we assume are all labels, are sent to the device -- these are stored in the `targets_dict`, by key(name) and item(data)
-        16. The outputs of the model are received
-    16. For each item in the targets_dict, the loss is computed
-    17. The gradients are sent back 
-    18. The weights are updated
-    19. The checkpoint is saved
+11. The training loop is started:
+    
+    - For each item in `data_dict` (this is a dictionary returned by the dataset that contains all images and labels):
+    - If it's the first batch, the script prints off the shape, dtype, and min/max values contained
+    - The item named 'image' in the data_dict is sent to the device
+    - Each other item in the `data_dict`, which we assume are all labels, are sent to the device -- these are stored in the `targets_dict`, by key(name) and item(data)
+    - The outputs of the model are received
+    - For each item in the targets_dict, the loss is computed
+    - The gradients are sent back 
+    - The weights are updated
+    - The checkpoint is saved
 
 19. Validation is performed, following the same steps save updating the weights or gradients. Loss is still computed for metrics. 
 
