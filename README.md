@@ -70,6 +70,8 @@ ___
 the training and validation are configured through a class called `ConfigManager`. This class parses a yaml file, an example of which is in the tasks folder. each of the following properties are set if provided, with some defaults selected if they are not contained in the config file. if you want to add a configuration, just put it in the yaml, and assign the property here-- you can now access it with the ConfigManager anywhere in training, inference, or within the dataset.
 
 not all of properties defined here are currently in use -- this is a fun side project for me that i am actively working on. 
+
+the basic training parameters are set in the config manager:
 ```python
 
 from types import SimpleNamespace
@@ -149,4 +151,34 @@ class ConfigManager:
         else:
             self.checkpoint_path = None
 
+```
+the model configuration is set mostly within NetworkFromConfig. These are intended to be similar to nnunetv2 ResEncM
+
+```python
+self.model_name = model_config.get("model_name", "Model")
+        self.use_timm = model_config.get("use_timm_encoder", False)
+        self.basic_encoder_block = model_config.get("basic_encoder_block", "BasicBlockD")
+        self.basic_decoder_block = model_config.get("basic_decoder_block", "ConvBlock")
+        self.features_per_stage = model_config.get("features_per_stage", [32, 64, 128, 256, 320, 320])
+        self.num_stages = model_config.get("num_stages", 6)
+        self.n_blocks_per_stage = model_config.get("n_blocks_per_stage", [1, 3, 4, 6, 6, 6])
+        self.n_conv_per_stage_decoder = model_config.get("n_conv_per_stage_decoder", [1, 1, 1, 1, 1])
+        self.bottleneck_block = model_config.get("bottleneck_block", "BasicBlockD")
+        self.op_dims = model_config.get("op_dims", 3)
+        self.kernel_sizes = model_config.get("kernel_sizes", [3, 3, 3, 3, 3])
+
+        # We may read these, but we override them below based on op_dims:
+        self.conv_bias = model_config.get("conv_bias", False)
+        self.norm_op_kwargs = model_config.get("norm_op_kwargs", {"affine": False, "eps": 1e-5})
+        self.dropout_op_kwargs = model_config.get("dropout_op_kwargs", {"p": 0.0})
+        self.nonlin = model_config.get("nonlin", "nn.LeakyReLU")
+        self.nonlin_kwargs = model_config.get("nonlin_kwargs", {"inplace": True})
+        self.strides = model_config.get("strides", [1, 2, 2, 2, 2, 2])
+        self.return_skips = model_config.get("return_skips", True)
+        self.do_stem = model_config.get("do_stem", True)
+        self.stem_channels = model_config.get("stem_channels", None)
+        self.bottleneck_channels = model_config.get("bottleneck_channels", None)
+        self.stochastic_depth_p = model_config.get("stochastic_depth_p", 0.0)
+        self.squeeze_excitation = model_config.get("squeeze_excitation", False)
+        self.squeeze_excitation_reduction_ratio = 1.0 / 16.0 if self.squeeze_excitation else None
 ```
