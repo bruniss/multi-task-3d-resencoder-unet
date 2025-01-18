@@ -2,7 +2,7 @@ this repository contains training and inference scripts for a dynamically create
 
 the model can learn both segmentation and regression tasks simultaneously, and can accept an arbitrary number of inputs and target labels. currently the only supported data format is zarr. 
 
-currently the blocks are all from dynamic network archtectures. the encoder and decoder are also just slightly modified versions of those. the "default" settings if provided no model config in the yaml are basically the ResEncM version of nnunetv2 residual encoder nets
+currently the blocks are all from dynamic network archtectures. the encoder and decoder are also just slightly modified versions of those. the "default" settings if provided no model config in the yaml are basically the ResEncM version of nnunetv2 residual encoder nets. it autoconfigures in the same way save a hardcoded patch size because my primary use case for this sets the patch size based on other external factors (such as max size of labeled regions, etc)
 
 i'm adding to this frequently, so more will come. the design im going for is very much inspired by nnunet (it would probably make more sense to just extend nnunet but wheres the fun in that). it borrows heavily from dynamic_network_architectures, and all of the building blocks are from there. i am very grateful to both of these development teams/individuals for sharing and developing these frameworks :) 
 
@@ -10,6 +10,7 @@ https://github.com/MIC-DKFZ/nnUNet
 
 
 ![image](https://github.com/user-attachments/assets/08f27dea-5b93-4b4d-a97f-b53bb6921cf3)
+
 
 
 ___
@@ -152,33 +153,4 @@ class ConfigManager:
             self.checkpoint_path = None
 
 ```
-the model configuration is set mostly within NetworkFromConfig. These are intended to be similar to nnunetv2 ResEncM
 
-```python
-self.model_name = model_config.get("model_name", "Model")
-        self.use_timm = model_config.get("use_timm_encoder", False)
-        self.basic_encoder_block = model_config.get("basic_encoder_block", "BasicBlockD")
-        self.basic_decoder_block = model_config.get("basic_decoder_block", "ConvBlock")
-        self.features_per_stage = model_config.get("features_per_stage", [32, 64, 128, 256, 320, 320])
-        self.num_stages = model_config.get("num_stages", 6)
-        self.n_blocks_per_stage = model_config.get("n_blocks_per_stage", [1, 3, 4, 6, 6, 6])
-        self.n_conv_per_stage_decoder = model_config.get("n_conv_per_stage_decoder", [1, 1, 1, 1, 1])
-        self.bottleneck_block = model_config.get("bottleneck_block", "BasicBlockD")
-        self.op_dims = model_config.get("op_dims", 3)
-        self.kernel_sizes = model_config.get("kernel_sizes", [3, 3, 3, 3, 3])
-
-        # We may read these, but we override them below based on op_dims:
-        self.conv_bias = model_config.get("conv_bias", False)
-        self.norm_op_kwargs = model_config.get("norm_op_kwargs", {"affine": False, "eps": 1e-5})
-        self.dropout_op_kwargs = model_config.get("dropout_op_kwargs", {"p": 0.0})
-        self.nonlin = model_config.get("nonlin", "nn.LeakyReLU")
-        self.nonlin_kwargs = model_config.get("nonlin_kwargs", {"inplace": True})
-        self.strides = model_config.get("strides", [1, 2, 2, 2, 2, 2])
-        self.return_skips = model_config.get("return_skips", True)
-        self.do_stem = model_config.get("do_stem", True)
-        self.stem_channels = model_config.get("stem_channels", None)
-        self.bottleneck_channels = model_config.get("bottleneck_channels", None)
-        self.stochastic_depth_p = model_config.get("stochastic_depth_p", 0.0)
-        self.squeeze_excitation = model_config.get("squeeze_excitation", False)
-        self.squeeze_excitation_reduction_ratio = 1.0 / 16.0 if self.squeeze_excitation else None
-```
