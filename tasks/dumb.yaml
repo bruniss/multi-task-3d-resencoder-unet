@@ -3,7 +3,7 @@
 tr_setup:
   model_name: sheet_only                    # required [str] this is the name your model will checkpoint will be saved as
   vram_max: 22000                    # required if autoconfigure is true, else optional-- the amount in MB you want the model to use
-  autoconfigure: false               # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
+  autoconfigure: true               # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
   tr_val_split: 0.90                 # optional[float] the percentage of your total dataset used for training, with the other part being used for val
   dilate_label: false                # optional, false [bool] if true, will apply a small dilation to your labels using a 3x3 spherical kernel -- will skip tasks named "normals"
   # checkpoint_path: "./ink_157.pth" # optional, none [str] if provided, will load the provided checkpoint and begin training from there
@@ -58,7 +58,7 @@ dataset_config:
   use_cache: true             # optional, True [bool] whether to store a patch position cache. strongly recommended
   cache_folder: "patch_cache/sheet_only" # optional, the location to store the cache
   volume_paths:
-    - input: https://dl.ash2txt.org/full-scrolls/Scroll1/PHercParis4.volpkg/volumes_zarr_standardized/54keV_7.91um_Scroll1A.zarr/
+    - input: https://dl.ash2txt.org/community-uploads/james/Scroll1/Scroll1_8um.zarr/
       sheet: /mnt/raid_nvme/datasets/1-voxel-sheet_slices-closed.zarr/0.zarr
       normals: /home/sean/Documents/GitHub/VC-Surface-Models/models/normals.zarr
       ref_label: sheet
