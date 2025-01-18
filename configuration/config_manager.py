@@ -69,7 +69,10 @@ class ConfigManager:
         self.infer_patch_size = tuple(self.inference_config.get("patch_size", self.train_patch_size))
         self.infer_batch_size = int(self.inference_config.get("batch_size", self.train_batch_size))
         self.infer_output_path = self.inference_config.get("output_path", "./outputs")
-        # etc. for all your inference config as needed...
+        self.infer_output_format = self.inference_config.get("output_format", "zarr")
+        self.infer_type = self.inference_config.get("type", "np.uint8")
+        self.infer_output_targets = self.inference_config.get("output_targets", ['all'])
+        self.infer_overlap = float(self.inference_config.get("overlap", 0.25))
 
         self._print_summary()
 
