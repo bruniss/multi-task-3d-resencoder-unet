@@ -4,7 +4,7 @@ the model can learn both segmentation and regression tasks simultaneously, and c
 
 currently the blocks are all from dynamic network archtectures. the encoder and decoder are also just slightly modified versions of those. the "default" settings if provided no model config in the yaml are basically the ResEncM version of nnunetv2 residual encoder nets
 
-i'm adding to this frequently, so more will come. the design im going for is very much inspired by nnunet (it would probably make more sense to just extend nnunet but wheres the fun in that). it borrows heavily from pytorch3dunet, and all of the building blocks are from there. i am very grateful to both of these development teams/individuals for sharing and developing these frameworks :) 
+i'm adding to this frequently, so more will come. the design im going for is very much inspired by nnunet (it would probably make more sense to just extend nnunet but wheres the fun in that). it borrows heavily from dynamic_network_architectures, and all of the building blocks are from there. i am very grateful to both of these development teams/individuals for sharing and developing these frameworks :) 
 
 https://github.com/MIC-DKFZ/nnUNet
 
