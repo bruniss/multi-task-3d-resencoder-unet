@@ -1,6 +1,8 @@
 import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool
+import fsspec
+import zarr
 
 def _chunker(seq, chunk_size):
     """Yield successive 'chunk_size'-sized chunks from 'seq'."""
@@ -295,3 +297,23 @@ def get_overlapping_chunks(z0, y0, x0, patch_z, patch_y, patch_x,
                 ))
     return results
 
+def open_zarr_path(path: str, mode='r'):
+    """
+    Attempts to open a Zarr store from either a local path or a remote URL.
+
+    Examples of possible `path` values:
+      - '/local/path/to/data.zarr'
+      - 's3://my-bucket/folder/data.zarr'
+      - 'https://my-dataset-server.com/data.zarr'
+    """
+    # Check if it's likely a remote path
+    if (
+        path.startswith('http://') or path.startswith('https://')
+        or path.startswith('s3://') or path.startswith('gs://')
+        # Add more protocols here if needed
+    ):
+        store = fsspec.get_mapper(path)
+        return zarr.open(store, mode=mode)
+    else:
+        # Assume it's a local path
+        return zarr.open(path, mode=mode)
