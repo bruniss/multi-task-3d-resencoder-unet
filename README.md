@@ -4,7 +4,7 @@ the model can learn both segmentation and regression tasks simultaneously, and c
 
 currently the blocks are all from dynamic network archtectures. the encoder and decoder are also just slightly modified versions of those. the "default" settings if provided no model config in the yaml are basically the ResEncM version of nnunetv2 residual encoder nets. it autoconfigures in the same way save a hardcoded patch size because my primary use case for this sets the patch size based on other external factors (such as max size of labeled regions, etc)
 
-there still is though many things nnunetv2 does that i have not yet implemented, primarily in normalization and resampling based on spacing. these will be added soon.  
+there still is though many things nnunetv2 does that i have not yet implemented, primarily in normalization, augmentations, and resampling based on spacing. i make no promises that it performs as well as nnunetv2, but as far as i can tell it should be relatively performant. once i have the framework all finished setting up , i'll run some baseline tests to ensure i havent broken anything.
 
 i'm adding to this frequently, so more will come. the design im going for is very much inspired by nnunet (it would probably make more sense to just extend nnunet but wheres the fun in that). it borrows heavily from dynamic_network_architectures, and all of the building blocks are from there. i am very grateful to both of these development teams/individuals for sharing and developing these frameworks :) 
 
