@@ -76,83 +76,65 @@ not all of properties defined here are currently in use -- this is a fun side pr
 
 the basic training parameters are set in the config manager:
 ```python
+self.tr_info = config["tr_setup"]
+        self.tr_configs = config["tr_config"]
+        self.model_config = config["model_config"]
+        self.dataset_config = config["dataset_config"]
+        self.inference_config = config["inference_config"]
 
-from types import SimpleNamespace
-from pathlib import Path
-import yaml
+        # Now read your "training setup" keys as dictionary lookups:
+        self.model_name = self.tr_info.get("model_name", "Model")
+        self.vram_max = float(self.tr_info.get("vram_max", 16))
+        self.autoconfigure = bool(self.tr_info.get("autoconfigure", True))
+        self.tr_val_split = float(self.tr_info.get("tr_val_split", 0.95))
+        self.dilate_label = bool(self.tr_info.get("dilate_label", False))
 
-class ConfigManager:
-    def __init__(self, config_path):
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+        ckpt_out_base = self.tr_info.get("ckpt_out_base", "./checkpoints/")
+        self.ckpt_out_base = Path(ckpt_out_base)
+        ckpt_path = self.tr_info.get("checkpoint_path", None)
+        self.checkpoint_path = Path(ckpt_path) if ckpt_path else None
 
-        self.tr_info = SimpleNamespace(**config["tr_setup"])
-        self.tr_configs = SimpleNamespace(**config["tr_config"])
-        self.model_config = SimpleNamespace(**config["model_config"])
-        self.dataset_config = SimpleNamespace(**config["dataset_config"])
-        self.inference_config = SimpleNamespace(**config["inference_config"])
+        self.load_weights_only = bool(self.tr_info.get("load_weights_only", False))
+        self.tensorboard_log_dir = self.tr_info.get("tensorboard_log_dir", "./tensorboard_logs/")
 
-        # training setup
-        self.model_name = getattr(self.tr_info, "model_name", "Model")
-        self.vram_max = float(getattr(self.tr_info, "vram_max", 16))
-        self.autoconfigure = bool(getattr(self.tr_info, "autoconfigure", True))
-        self.tr_val_split = float(getattr(self.tr_info, "tr_val_split", 0.95))
-        self.dilate_label = bool(getattr(self.tr_info, "dilate_label", False))
-        self.ckpt_out_base = Path(getattr(self.tr_info, "ckpt_out_base", "./checkpoints/"))
-        self.checkpoint_path = getattr(self.tr_info, "checkpoint_path", None)
-        self.load_weights_only = getattr(self.tr_info, "load_weights_only", False)
-        self.tensorboard_log_dir = str(getattr(self.tr_info, "tensorboard_log_dir", "./tensorboard_logs/"))
+        # Training config
+        self.optimizer = self.tr_configs.get("optimizer", "AdamW")
+        self.initial_lr = float(self.tr_configs.get("initial_lr", 1e-3))
+        self.weight_decay = float(self.tr_configs.get("weight_decay", 0))
+        self.train_patch_size = tuple(self.tr_configs.get("patch_size", [192, 192, 192]))
+        self.train_batch_size = int(self.tr_configs.get("batch_size", 2))
+        self.gradient_accumulation = int(self.tr_configs.get("gradient_accumulation", 1))
+        self.max_steps_per_epoch = int(self.tr_configs.get("max_steps_per_epoch", 500))
+        self.max_val_steps_per_epoch = int(self.tr_configs.get("max_val_steps_per_epoch", 25))
+        self.train_num_dataloader_workers = int(self.tr_configs.get("num_dataloader_workers", 4))
+        self.max_epoch = int(self.tr_configs.get("max_epoch", 500))
 
-        # parameters for training
-        self.loss_only_on_label = bool(getattr(self.tr_configs, "loss_only_on_label", False))
-        self.train_patch_size = tuple(getattr(self.tr_configs, "patch_size", [192, 192, 192]))
-        self.train_batch_size = int(getattr(self.tr_configs, "batch_size", 2))
-        self.gradient_accumulation = int(getattr(self.tr_configs, "gradient_accumulation", 1))
-        self.optimizer = str(getattr(self.tr_configs, "optimizer", "AdamW"))
-        self.ignore_label = getattr(self.tr_configs, "ignore_label", None)
-        self.max_steps_per_epoch = int(getattr(self.tr_configs, "max_steps_per_epoch", 500))
-        self.max_val_steps_per_epoch = int(getattr(self.tr_configs, "max_val_steps_per_epoch", 25))
-        self.train_num_dataloader_workers = int(getattr(self.tr_configs, "num_dataloader_workers", 4))
-        self.label_smoothing = float(getattr(self.tr_configs, "label_smoothing", 0.2))
-        self.max_epoch = int(getattr(self.tr_configs, "max_epoch", 500))
-        self.initial_lr = float(getattr(self.tr_configs, "initial_lr", 1e-3))
-        self.weight_decay = float(getattr(self.tr_configs, "weight_decay", 0))
-        self.tensorboard_log_dir = Path(self.tensorboard_log_dir) / self.model_name
+        # Dataset config
+        self.min_labeled_ratio = float(self.dataset_config.get("min_labeled_ratio", 0.1))
+        self.min_bbox_percent = float(self.dataset_config.get("min_bbox_percent", 0.95))
+        self.use_cache = bool(self.dataset_config.get("use_cache", True))
+        self.cache_folder = Path(self.dataset_config.get("cache_folder", "patch_cache"))
+        self.in_channels = int(self.dataset_config.get("in_channels", 1))
+        self.tasks = self.dataset_config.get("targets", {})
+        self.volume_paths = self.dataset_config.get("volume_paths", [])
 
-        # model configuration -- no defaults here because it's handled by build_network_from_config dynamically
-        self.model_kwargs = vars(self.model_config).copy()
-
-        # dataset config
-        self.min_labeled_ratio = float(getattr(self.dataset_config, "min_labeled_ratio", 0.1))
-        self.min_bbox_percent = float(getattr(self.dataset_config, "min_bbox_percent", 0.95))
-        self.use_cache = bool(getattr(self.dataset_config, "use_cache", True))
-        self.cache_file = Path((getattr(self.dataset_config, "cache_file", 'valid_patches.json')))
-        self.in_channels = int(getattr(self.dataset_config, "in_channels", 1))
-        self.tasks = self.dataset_config.targets
-        self.volume_paths = self.dataset_config.volume_paths
+        # For output channels, sum up the channels of each task:
         self.out_channels = ()
-        for task_name, task_info in self.tasks.items():
+        for _, task_info in self.tasks.items():
             self.out_channels += (task_info["channels"],)
+        self.num_tasks = len(self.tasks)
 
-        # inference config
-        self.infer_input_path = str(getattr(self.inference_config, "input_path", None))
-        self.infer_input_format = str(getattr(self.inference_config, "input_format", "zarr"))
-        self.infer_output_format = str(getattr(self.inference_config, "output_format", "zarr"))
-        self.infer_load_all = bool(getattr(self.inference_config, "load_all", False))
-        self.infer_output_dtype = str(getattr(self.inference_config, "output_type", "np.uint8"))
-        self.infer_output_targets = list(getattr(self.inference_config, "output_targets", "all"))
-        self.infer_overlap = float(getattr(self.inference_config, "overlap", 0.15))
-        self.infer_blending = str(getattr(self.inference_config, "blending", "gaussian_importance"))
-        self.infer_patch_size = tuple(getattr(self.inference_config, "patch_size", self.train_patch_size))
-        self.infer_batch_size = int(getattr(self.inference_config, "batch_size", self.train_batch_size))
-        self.infer_checkpoint_path = getattr(self.inference_config, "checkpoint_path", None)
-        self.load_strict = bool(getattr(self.inference_config, "load_strict", True))
-        self.infer_num_dataloader_workers = int(getattr(self.inference_config, "num_dataloader_workers", self.train_num_dataloader_workers))
-
-        if self.checkpoint_path is not None:
-            self.checkpoint_path = Path(self.checkpoint_path)
-        else:
-            self.checkpoint_path = None
+        # Inference config
+        self.infer_checkpoint_path = self.inference_config.get("checkpoint_path", None)
+        self.infer_patch_size = tuple(self.inference_config.get("patch_size", self.train_patch_size))
+        self.infer_batch_size = int(self.inference_config.get("batch_size", self.train_batch_size))
+        self.infer_output_path = self.inference_config.get("output_path", "./outputs")
+        self.infer_output_format = self.inference_config.get("output_format", "zarr")
+        self.infer_type = self.inference_config.get("type", "np.uint8")
+        self.infer_output_targets = self.inference_config.get("output_targets", ['all'])
+        self.infer_overlap = float(self.inference_config.get("overlap", 0.25))
+        
+        self._print_summary()
 
 ```
 
