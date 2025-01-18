@@ -1,5 +1,5 @@
 import torch.nn as nn
-from builders.vram_estimation import compute_3dunet_feature_map_shapes, estimate_vram
+from builders.utils import get_pool_and_conv_props, get_n_blocks_per_stage
 from builders.encoder import Encoder
 from builders.decoder import Decoder
 
@@ -30,29 +30,152 @@ class NetworkFromConfig(nn.Module):
 
         # Read from mgr.model_config as a dict
         model_config = mgr.model_config
+        self.model_name = model_config.get("model_name", "Model")
 
         # the defaults below are essentially straight copied from nnunetv2 base resnet encoder with regular conv decoder
         # you can swap these out , this is good for about 8gb -- nnunet does not really increase feature maps when scaling for
         # higher vram , but mostly prios larger patch size and adding additional stages with repeated similar feature maps
-        self.model_name = model_config.get("model_name", "Model")
-        self.use_timm = model_config.get("use_timm_encoder", False)
-        self.basic_encoder_block = model_config.get("basic_encoder_block", "BasicBlockD")
-        self.basic_decoder_block = model_config.get("basic_decoder_block", "ConvBlock")
-        self.features_per_stage = model_config.get("features_per_stage", [32, 64, 128, 256, 320, 320])
-        self.num_stages = model_config.get("num_stages", 6)
-        self.n_blocks_per_stage = model_config.get("n_blocks_per_stage", [1, 3, 4, 6, 6, 6])
-        self.n_conv_per_stage_decoder = model_config.get("n_conv_per_stage_decoder", [1, 1, 1, 1, 1])
-        self.bottleneck_block = model_config.get("bottleneck_block", "BasicBlockD")
-        self.op_dims = model_config.get("op_dims", 3)
-        self.kernel_sizes = model_config.get("kernel_sizes", [3, 3, 3, 3, 3])
 
-        # We may read these, but we override them below based on op_dims:
-        self.conv_bias = model_config.get("conv_bias", False)
-        self.norm_op_kwargs = model_config.get("norm_op_kwargs", {"affine": False, "eps": 1e-5})
+        if mgr.autoconfigure:
+            print("--- Autoconfiguring network from config ---")
+
+            self.use_timm = False
+            self.basic_encoder_block = "BasicBlockD"
+            self.basic_decoder_block = "ConvBlock"
+            self.bottleneck_block = "BasicBlockD"
+
+            num_pool_per_axis, pool_op_kernel_sizes, conv_kernel_sizes, final_patch_size, must_div = \
+                get_pool_and_conv_props(
+                    spacing=(1.0, 1.0, 1.0),
+                    patch_size=mgr.train_patch_size,
+                    min_feature_map_size=4,
+                    max_numpool=999999
+                )
+
+            self.num_stages = len(pool_op_kernel_sizes)
+
+            base_features = 32
+            max_features = 512
+            features = []
+            for i in range(self.num_stages):
+                feats = base_features * (2 ** i)
+                features.append(min(feats, max_features))
+
+            self.num_pool_per_axis = num_pool_per_axis
+            self.pool_op_kernel_sizes = pool_op_kernel_sizes
+            self.kernel_sizes = conv_kernel_sizes
+            self.features_per_stage = features
+            self.n_blocks_per_stage = get_n_blocks_per_stage(self.num_stages)
+            self.n_conv_per_stage_decoder = [1] * (self.num_stages - 1)
+            self.strides = pool_op_kernel_sizes
+
+            print(f"------------------------------------------------------------")
+            print(f"Final Autoconfigured Parameters:")
+            print(f"num_stages: {self.num_stages}")
+            print(f"features_per_stage: {self.features_per_stage}")
+            print(f"n_blocks_per_stage: {self.n_blocks_per_stage}")
+            print(f"n_conv_per_stage_decoder: {self.n_conv_per_stage_decoder}")
+            print(f"strides: {self.strides}")
+            print(f"final_patch_size: {final_patch_size}")
+            print("-------------------------------------------------------------")
+
+        else:
+            print("--- Configuring network from config file ---")
+
+            self.use_timm = model_config.get("use_timm_encoder", False)
+
+            if "basic_encoder_block" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'basic_encoder_block' was not provided in the config!"
+                )
+            else:
+                self.basic_encoder_block = model_config["basic_encoder_block"]
+
+            if "basic_decoder_block" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'basic_decoder_block' was not provided in the config!"
+                )
+            else:
+                self.basic_decoder_block = model_config["basic_decoder_block"]
+
+            if "bottleneck_block" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'bottleneck_block' was not provided in the config!"
+                )
+            else:
+                self.bottleneck_block = model_config["bottleneck_block"]
+
+            if "features_per_stage" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'features_per_stage' was not provided in the config!"
+                )
+            else:
+                self.features_per_stage = model_config["features_per_stage"]
+
+            if "num_stages" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'num_stages' was not provided in the config!"
+                )
+            else:
+                self.num_stages = model_config["num_stages"]
+
+            if "n_blocks_per_stage" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'n_blocks_per_stage' was not provided in the config!"
+                )
+            else:
+                self.n_blocks_per_stage = model_config["n_blocks_per_stage"]
+
+            if "kernel_sizes" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'kernel_sizes' was not provided in the config!"
+                )
+            else:
+                self.kernel_sizes = model_config["kernel_sizes"]
+
+            if "n_conv_per_stage_decoder" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'n_conv_per_stage_decoder' was not provided in the config!"
+                )
+            else:
+                self.n_conv_per_stage_decoder = model_config["n_conv_per_stage_decoder"]
+
+            if "strides" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'strides' was not provided in the config!"
+                )
+            else:
+                self.strides = model_config["strides"]
+
+            print("-------------------------------------------------------------")
+            print(f"Final Manual Parameters:")
+            print(f"use_timm_encoder: {self.use_timm}")
+            print(f"basic_encoder_block: {self.basic_encoder_block}")
+            print(f"basic_decoder_block: {self.basic_decoder_block}")
+            print(f"bottleneck_block: {self.bottleneck_block}")
+            print(f"features_per_stage: {self.features_per_stage}")
+            print(f"num_stages: {self.num_stages}")
+            print(f"n_blocks_per_stage: {self.n_blocks_per_stage}")
+            print(f"kernel_sizes: {self.kernel_sizes}")
+            print(f"n_conv_per_stage_decoder: {self.n_conv_per_stage_decoder}")
+            print(f"strides: {self.strides}")
+            print("-------------------------------------------------------------")
+
+        # these are not currently configurable in the yaml, we read these, but we override them below based on patch dims
+        # these are placeholders for when these become more configurable , but they are solid presets
+        self.conv_op = model_config.get("conv_op", "nn.Conv3d")
+        self.conv_op_kwargs = model_config.get("conv_op_kwargs", {"bias": False})
+        self.pool_op = model_config.get("pool_op", "nn.AvgPool3d")
+        self.dropout_op = model_config.get("dropout_op", "nn.Dropout3d")
         self.dropout_op_kwargs = model_config.get("dropout_op_kwargs", {"p": 0.0})
+        self.norm_op = model_config.get("norm_op", "nn.InstanceNorm3d")
+        self.norm_op_kwargs = model_config.get("norm_op_kwargs", {"affine": False, "eps": 1e-5})
+
+        # these can be configured in the yaml but these are reasonable defaults. wouldn't change unless you have good reason to
+        # other than se , they are mostly well tested in nnunetv2
+        self.conv_bias = model_config.get("conv_bias", False)
         self.nonlin = model_config.get("nonlin", "nn.LeakyReLU")
         self.nonlin_kwargs = model_config.get("nonlin_kwargs", {"inplace": True})
-        self.strides = model_config.get("strides", [1, 2, 2, 2, 2, 2])
         self.return_skips = model_config.get("return_skips", True)
         self.do_stem = model_config.get("do_stem", True)
         self.stem_channels = model_config.get("stem_channels", None)
@@ -60,12 +183,15 @@ class NetworkFromConfig(nn.Module):
         self.stochastic_depth_p = model_config.get("stochastic_depth_p", 0.0)
         self.squeeze_excitation = model_config.get("squeeze_excitation", False)
         self.squeeze_excitation_reduction_ratio = 1.0 / 16.0 if self.squeeze_excitation else None
-
-        if self.patch_size[0] < 128 and self.patch_size[1] < 128 and self.patch_size[2] < 128:
-            print(f"With patch size of 128^3 we can't go above 6 layers without using anisotropic pooling. "
-                  f"Recommend to either increase patch size or batch size.")
-
         self.stem_n_channels = self.features_per_stage[0]
+
+        if len(self.patch_size) == 2:
+            self.op_dims = 2
+        elif len(self.patch_size) == 3:
+            self.op_dims = 3
+        else:
+            raise ValueError("Patch size must have either 2 or 3 dimensions!")
+
         # Decide 2D vs 3D conv/pool based on op_dims
         if self.op_dims == 2:
             self.conv_op = nn.Conv2d
@@ -98,6 +224,12 @@ class NetworkFromConfig(nn.Module):
             # If we’re not using BottleneckD, it’s either BasicBlock, etc.
             # Then bottleneck_channels typically don’t matter, so we can set them to None or ignore them
             self.bottleneck_channels = None
+
+        # Suppose you have:
+        #   spacing = (1.0, 1.0, 1.0) # for uniform 3D
+        #   user_patch = self.train_patch_size
+        #   min_feature_map_size = 4
+        #   max_numpool = 999999
 
         # Shared encoder
         self.shared_encoder = Encoder(

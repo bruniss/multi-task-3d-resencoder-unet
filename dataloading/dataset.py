@@ -33,6 +33,9 @@ class ZarrSegmentationDataset3D(Dataset):
         for vol_idx, vol_info in enumerate(self.volume_paths):
             ref_label_key = vol_info.get("ref_label", "sheet")
             # We'll keep them as strings so we can open them later in __getitem__
+            # this is so we can easily use fsspec for http zarrs in a fork-safe manner
+            # since a zarr once open in fsspec is not fork-safe and will error
+            # minor overhead here, but it is what it is
             vol_dict = {
                 "input_path": vol_info["input"],
                 "targets_path": {},

@@ -1,54 +1,56 @@
 # YOU DO NOT HAVE TO PROVIDE VALUES IN MOST OF THESE FIELDS
 
-tr_params:
-  model_name: ink             # required [str] this is the name your model will checkpoint will be saved as
-  vram_max: 22000             # required if autoconfigure is true, else optional-- the amount in MB you want the model to use
-  autoconfigure: false         # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
-  patch_size: [14, 128, 128]  # optional [list] patch size for training
-  batch_size: 12              # optional [int] batch size for training
-  tr_val_split: 0.90          # optional[float] the percentage of your total dataset used for training, with the other part being used for val
-  ignore_label: null          # [NOT YET IMPLEMENTED] if you have an ignore label, you can set it here and loss will not be computed against it
-  loss_only_on_label: false   # [NOT YET IMPLEMENTED]
-  dilate_label: false         # optional, false [bool] if true, will apply a small dilation to your labels using a 3x3 spherical kernel -- will skip tasks named "normals"
-  initial_lr: 0.001           # optional initial learning rate
-  weight_decay: 0.0           # optional, 0.0001 [float]
-  max_steps_per_epoch: 500    # optional, 500 [int] the number of batches seen by the model each epoch
-  max_val_steps_per_epoch: 25 # optional, 25 [int] the number of batches seen in validation each epoch
-  max_epoch: 500              # optional, 500 [int] the maximum number of epochs to train for
-  gradient_accumulation: 1    # optional, 1 [int] if 1, no accumulation, if >1 will accumulate this many 'batches' each batch to similate larger batch size.
-  load_weights_only: false    # optional, false [bool] if true, will not load the optimizer, scheduler, or epoch state from the model -- set true to fine-tune
-  ckpt_out_base: "/mnt/raid_hdd/models/ink" # [str] the path the model checkpoint is saved to
-  # checkpoint_path: "/mnt/raid_hdd/models/ink/ink_157.pth" # optional, None [str] if provided, will load the provided checkpoint and begin training from there
-  optimizer: "AdamW" # optional, AdamW [str] the optimizer to use during training. currently only AdamW and SGD are provided.
-  num_dataloader_workers: 12 # optional, 4 [int]
-  tensorboard_log_dir: "/home/sean/Desktop/tensorboard/ink" # [str] the path the tensorboard logs will be stored to
+tr_setup:
+  model_name: sheet_only                    # required [str] this is the name your model will checkpoint will be saved as
+  vram_max: 22000                    # required if autoconfigure is true, else optional-- the amount in MB you want the model to use
+  autoconfigure: true               # optional, true -- if true, the network will attempt to set some reasonable defaults based on your vram_max
+  tr_val_split: 0.90                 # optional[float] the percentage of your total dataset used for training, with the other part being used for val
+  dilate_label: false                # optional, false [bool] if true, will apply a small dilation to your labels using a 3x3 spherical kernel -- will skip tasks named "normals"
+  # checkpoint_path: "./ink_157.pth" # optional, none [str] if provided, will load the provided checkpoint and begin training from there
+  load_weights_only: false           # optional, false [bool] if true, will not load the optimizer, scheduler, or epoch state from the model -- set true to fine-tune
+  ckpt_out_base: "./checkpoints"     # [str] the path the model checkpoint is saved to
+  tensorboard_log_dir: "./logs"      # optional, './' [str] the path the tensorboard logs will be stored to
 
-
+tr_config:
+  optimizer: "AdamW"            # optional, AdamW [str] the optimizer to use during training. currently only AdamW and SGD are provided.
+  initial_lr: 0.001             # optional initial learning rate
+  weight_decay: 0.0001             # optional, 0.0001 [float]
+  gradient_accumulation: 1      # optional, 1 [int] if 1, no accumulation, if >1 will accumulate this many 'batches' each batch to simulate larger batch size.
+  num_dataloader_workers: 12    # optional, 4 [int]
+  patch_size: [14, 256, 256]    # optional [list] patch size for training
+  batch_size: 3              # optional [int] batch size for training
+  max_steps_per_epoch: 500      # optional, 500 [int] the number of batches seen by the model each epoch
+  max_val_steps_per_epoch: 25   # optional, 25 [int] the number of batches seen in validation each epoch
+  max_epoch: 500                # optional, 500 [int] the maximum number of epochs to train for
+  ignore_label: null            # [NOT YET IMPLEMENTED] if you have an ignore label, you can set it here and loss will not be computed against it
+  loss_only_on_label: false     # [NOT YET IMPLEMENTED]
 
 model_config:
-
-  # set the feature maps and the number of levels you would like in your network -- the number of feature maps
-  # must be equal to the number of levels. note that the feature maps extend through the entire encoder/decoder
-  # stage, and so will add a significant amount of memory overhead as these numbers get larger. typically
-  # feature maps double each layer, but you can put whatever numbers you want here.
-
-  f_maps: [64, 128, 256, 512, 768] # optional, [list] or [int] -- if an int is provided will automatically double each layer
-
-  # you can set the basic block from the following list:
-  #     DoubleConv, ResNetBlock, ResNetBlockSE, nnUNetStyleResNetBlockSE
-  # if you specify a squeeze and excitation block, you can provide a se_module , or it will fall back to scse
-  basic_module: "nnUNetStyleResNetBlockSE" # optional
-
-  # valid options here are:
-  #    1. cse - `Channel Squeeze and Excitation <https://arxiv.org/abs/1709.01507>`_
-  #    2. sse - `Spatial Squeeze and Excitation <https://arxiv.org/abs/1803.02579>`_
-  #    3. scse - `Channel and Spatial Squeeze and Excitation <https://arxiv.org/abs/1803.02579>`_
-  se_module: 'sse' # optional [str]
-
-  # these two control how much your data is downsampled/upsampled in the network. if 2 is set, the size is reduced by half each layer in the encoder
-  # this means that if you set your f_maps to have 5 layers, and your z_axis can't be divided by two 5 times, you'll get an error, you can set this
-  # here to 1, and not downsample at all in that dimension
-  pool_kernel_size: [1, 2, 2] # optional, 2 [tuple] or [int] , the amount of downsampling done per level in encoder. the decoder will use the same config , (z, y, x)
+  use_timm_encoder: false
+  timm_encoder_class: null
+  basic_encoder_block: "ResidualBlock"                      # or ConvBlock
+  basic_decoder_block: "ConvBlock"
+  features_per_stage: [32, 64, 128, 256, 320, 320]  # optional, [list] or [int] -- if an int is provided will automatically double each layer
+  num_stages: 6                                     # number of layers
+  n_blocks_per_stage: [1, 3, 4, 6, 6, 6]            #
+  n_conv_per_stage_decoder: [1, 1, 1, 1, 1]         # should be n_blocks_per_stage - 1
+  bottleneck_block: 'BasicBlockD'                   # could be BottleneckD but just leave this as-is
+  op_dims: 3                                        # this is the amount of dimensions of your input data, must be 1 , 2, or 3
+  kernel_sizes: [3, 3, 3, 3, 3, 3]                                 # conv kernel size (3, 3, 3) for each block
+  pool_op: 'nn.MaxPool3d'                           # currently defaults to this if 3d, MaxPool2d if 2d
+  conv_bias: true                                  # should be true
+  norm_op: 'nn.InstanceNorm3d'                      # currenlty defaults to instancenorm3d for 3d and 2d for 2d, this doesnt change it
+  dropout_op: 'nn.Dropout3d'
+  dropout_op_kwargs: {'p': 0.0}
+  nonlin: 'nn.LeakyReLU'
+  nonlin_kwargs: {'inplace': True}
+  strides: [1, 2, 2, 2, 2, 2]                   # aka dilation
+  return_skips: True
+  do_stem: True
+  stem_channels: None
+  bottleneck_channels: null
+  stochastic_depth_p: 0.0
+  squeeze_excitation: true
 
 dataset_config:
   # the dataset config is where we build the targets data and the labeled data. you can use any number of inputs and labels.
@@ -62,7 +64,7 @@ dataset_config:
   min_bbox_percent: 0.20 # optional, 0.97 [float] a percentage of the patch size that must be encompassed by a bbox containing all the labels in the patch
   min_labeled_ratio: 0.20 # optional, 0.15 [float] a percentage of the above bbox that must contain labeled data (ie: the density of the labels)
   use_cache: true # optional, True [bool] whether to store a patch position cache. strongly recommended
-  cache_file: "/home/sean/Desktop/s1_segments/14_128_128_inkcache_2.json" # optional, './' the location to store the cache
+  cache_file: "/patch_caches" # optional, './' the location to store the cache
   volume_paths: # these are your input volumes. each must have input volume path, target volume path (from your targets defined in targets),
     - input: "/home/sean/Desktop/s1_segments/0901.zarr/layers.zarr"
       ink: "/home/sean/Desktop/s1_segments/0901.zarr/inklabels.zarr"
@@ -112,7 +114,7 @@ dataset_config:
         alpha: 0.5
         beta: 0.5
 
-inference_params:
+inference_config:
   patch_size: [14, 128, 128] # optional - patch size to use for inference. this can be different than what you trained with, but might hurt performance
   batch_size: 8              # optional - this typically can be larger for inference than training
   checkpoint_path: "/mnt/raid_hdd/models/ink/ink_65.pth" # the checkpoint to load

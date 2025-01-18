@@ -327,3 +327,119 @@ def get_default_network_config(dimension: int = 2,
         raise NotImplementedError('Unknown nonlin %s. Only "LeakyReLU" and "ReLU" are supported for now' % nonlin)
 
     return config
+
+from copy import deepcopy
+import numpy as np
+
+def get_pool_and_conv_props(spacing, patch_size, min_feature_map_size, max_numpool):
+    """
+    This is the same as your posted function.
+    We assume `patch_size` is the user-provided shape,
+    not one that we compute ourselves.
+    """
+    dim = len(spacing)
+
+    current_spacing = deepcopy(list(spacing))
+    current_size = deepcopy(list(patch_size))
+
+    pool_op_kernel_sizes = [[1] * len(spacing)]
+    conv_kernel_sizes = []
+
+    num_pool_per_axis = [0] * dim
+    kernel_size = [1] * dim
+
+    while True:
+        # 1) check if we can still downsample by factor 2 on each axis
+        valid_axes_for_pool = [i for i in range(dim) if current_size[i] >= 2 * min_feature_map_size]
+        if len(valid_axes_for_pool) < 1:
+            break
+
+        # 2) check spacing ratio constraints: only pool if spacing not >2× the smallest spacing
+        min_spacing_of_valid = min(current_spacing[i] for i in valid_axes_for_pool)
+        valid_axes_for_pool = [i for i in valid_axes_for_pool
+                               if current_spacing[i] / min_spacing_of_valid < 2]
+
+        # 3) check we haven't exceeded the max number of pooling ops
+        valid_axes_for_pool = [i for i in valid_axes_for_pool if num_pool_per_axis[i] < max_numpool]
+        if len(valid_axes_for_pool) < 1:
+            break
+
+        # 4) update conv kernel sizes:
+        #    once an axis is within factor 2 of the smallest spacing, we set kernel_size=3 for that axis.
+        for d in range(dim):
+            if kernel_size[d] == 3:
+                continue
+            else:
+                if current_spacing[d] / min(current_spacing) < 2:
+                    kernel_size[d] = 3
+
+        pool_kernel_sizes = [1] * dim
+        for v in valid_axes_for_pool:
+            pool_kernel_sizes[v] = 2
+            num_pool_per_axis[v] += 1
+            current_spacing[v] *= 2
+            current_size[v] = np.ceil(current_size[v] / 2).astype(int)
+
+        pool_op_kernel_sizes.append(pool_kernel_sizes)
+        conv_kernel_sizes.append(deepcopy(kernel_size))
+
+    # finalize the patch shape so it is divisible by 2^(num_pool_per_axis)
+    must_be_divisible_by = 2 ** np.array(num_pool_per_axis)
+    patch_size = pad_shape(patch_size, must_be_divisible_by)
+
+    # add one more conv_kernel_size for the bottleneck
+    conv_kernel_sizes.append([3]*dim)
+
+    def _to_tuple(lst):
+        return tuple(_to_tuple(i) if isinstance(i, list) else i for i in lst)
+
+    return (
+        num_pool_per_axis,
+        _to_tuple(pool_op_kernel_sizes),
+        _to_tuple(conv_kernel_sizes),
+        tuple(patch_size),
+        must_be_divisible_by
+    )
+
+
+def pad_shape(shape, must_be_divisible_by):
+    """
+    pads shape so that it is divisible by must_be_divisible_by
+    """
+    if not isinstance(must_be_divisible_by, (tuple, list, np.ndarray)):
+        must_be_divisible_by = [must_be_divisible_by] * len(shape)
+    else:
+        assert len(must_be_divisible_by) == len(shape)
+
+    new_shp = []
+    for i in range(len(shape)):
+        remainder = shape[i] % must_be_divisible_by[i]
+        if remainder == 0:
+            # if shape[i] is already divisible, in nnU-Net we typically keep it
+            # but to exactly emulate nnU-Net v1/v2 logic, we subtract the block size
+            # so that e.g. 128 remains 128 (not 192). In practice, either approach can be used:
+            new_shp.append(shape[i])
+        else:
+            # add however many voxels are needed to make it multiple
+            new_shp.append(shape[i] + (must_be_divisible_by[i] - remainder))
+
+    return tuple(new_shp)
+
+def get_n_blocks_per_stage(num_stages):
+    """
+    Stage 0 -> 1 block
+    Stage 1 -> 3 blocks
+    Stage 2 -> 4 blocks
+    Stages 3+ -> 6 blocks each
+    """
+    blocks = []
+    for i in range(num_stages):
+        if i == 0:
+            blocks.append(1)
+        elif i == 1:
+            blocks.append(3)
+        elif i == 2:
+            blocks.append(4)
+        else:
+            blocks.append(6)
+    return blocks
