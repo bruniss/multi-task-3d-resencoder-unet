@@ -1,10 +1,7 @@
-import os
 from pathlib import Path
-import yaml
-
+import os
 from tqdm import tqdm
 import numpy as np
-import logging
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim import AdamW, SGD
@@ -12,10 +9,10 @@ from torch.utils.data import DataLoader, SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
 from dataloading.dataset import ZarrSegmentationDataset3D
-from visualization.plotting import save_debug_gif,log_3d_slices_as_images, debug_dataloader_plot, export_data_dict_as_tif
-from builders.build_network_from_config import BuildNetworkFromConfig
+from training.visualization.plotting import save_debug_gif, export_data_dict_as_tif
+from builders.build_network_from_config import NetworkFromConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
-from losses.losses import MaskedCosineLoss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
+from training.losses.losses import MaskedCosineLoss, BCEWithLogitsLossLabelSmoothing, BCEDiceLoss, BCEWithLogitsLossZSmooth
 from configuration.config_manager import ConfigManager
 
 
@@ -31,25 +28,14 @@ class BaseTrainer:
     # --- build model --- #
     def _build_model(self):
 
-        builder = BuildNetworkFromConfig(self.mgr)
-        model = builder.build()
-        model.print_config()
+        model = NetworkFromConfig(self.mgr)
 
         return model
 
     # --- configure dataset --- #
     def _configure_dataset(self):
-        dataset = ZarrSegmentationDataset3D(
-            volume_paths=self.mgr.volume_paths,
-            tasks=self.mgr.tasks,
-            patch_size=self.mgr.train_patch_size,
-            min_labeled_ratio=self.mgr.min_labeled_ratio,
-            min_bbox_percent=self.mgr.min_bbox_percent,
-            dilate_label=self.mgr.dilate_label,
-            transforms=None,
-            use_cache=self.mgr.use_cache,
-            cache_file=Path(self.mgr.cache_file)
-        )
+
+        dataset = ZarrSegmentationDataset3D(mgr=self.mgr)
 
         return dataset
 
@@ -158,6 +144,9 @@ class BaseTrainer:
             return
 
         start_epoch = 0
+
+        if not self.mgr.checkpoint_path:
+            os.makedirs(self.mgr.ckpt_out_base, exist_ok=True)
 
         if self.mgr.checkpoint_path is not None and Path(self.mgr.checkpoint_path).exists():
             print(f"Loading checkpoint from {self.mgr.checkpoint_path}")

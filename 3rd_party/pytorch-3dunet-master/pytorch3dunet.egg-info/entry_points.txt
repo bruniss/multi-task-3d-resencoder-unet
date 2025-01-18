@@ -1,3 +1,0 @@
-[console_scripts]
-predict3dunet = pytorch3dunet.predict:main
-train3dunet = pytorch3dunet.train:main

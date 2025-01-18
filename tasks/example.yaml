@@ -17,8 +17,8 @@ tr_config:
   weight_decay: 0.0             # optional, 0.0001 [float]
   gradient_accumulation: 1      # optional, 1 [int] if 1, no accumulation, if >1 will accumulate this many 'batches' each batch to simulate larger batch size.
   num_dataloader_workers: 12    # optional, 4 [int]
-  patch_size: [14, 128, 128]  # optional [list] patch size for training
-  batch_size: 12                # optional [int] batch size for training
+  patch_size: [64, 192, 192]    # optional [list] patch size for training
+  batch_size: 3                # optional [int] batch size for training
   max_steps_per_epoch: 500      # optional, 500 [int] the number of batches seen by the model each epoch
   max_val_steps_per_epoch: 25   # optional, 25 [int] the number of batches seen in validation each epoch
   max_epoch: 500                # optional, 500 [int] the maximum number of epochs to train for
@@ -26,10 +26,10 @@ tr_config:
   loss_only_on_label: false     # [NOT YET IMPLEMENTED]
 
 model_config:
-  f_maps: [64, 128, 256, 512, 768]         # optional, [list] or [int] -- if an int is provided will automatically double each layer
+  f_maps: [32, 64, 128, 256, 320, 528]         # optional, [list] or [int] -- if an int is provided will automatically double each layer
   basic_module: "nnUNetStyleResNetBlockSE" # optional, ResNetBlockSE [str] - DoubleConv, ResNetBlock, ResNetBlockSE, nnUNetStyleResNetBlockSE
   se_module: 'sse'                         # optional [str] - squeeze and excitation blocks --  sse: spatial , cse: channel, scse: channel and spatial
-  pool_kernel_size: [1, 2, 2]              # optional, 2 [tuple] or [int] , downsample per level in encoder/decoder -- 2 = 2x per level
+  pool_kernel_size: [2, 2, 2]              # optional, 2 [tuple] or [int] , downsample per level in encoder/decoder -- 2 = 2x per level
 
 dataset_config:
   # the dataset config is where we build the targets data and the labeled data. you can use any number of inputs and labels.
@@ -66,6 +66,10 @@ dataset_config:
       loss_kwargs:           # optional, none - any keyword arguments you would like to pass to your loss function, each on its own line
         alpha: 0.5
         beta: 0.5
+    normal: # the name of the target, will be the name used in the data dict
+      channels: 3          # required [int] the number of channels in your input -- your input should be in shape z, y, x, c
+      activation: "none"     # optional, none [str] the activation type you would like your model to perform during training, options are: Sigmoid , Softmax, None.
+      weight: 1
 
 inference_config:                           # these parameters only apply on inference
   checkpoint_path: "./checkpoints/ckpt.pth" # the checkpoint to load
@@ -81,7 +85,7 @@ inference_config:                           # these parameters only apply on inf
   patch_size: [128, 128, 128]               # this can be different than your training setup , but may negatively impact performance
   batch_size: 4                             # can typically be higher than your train batch size, watch vram
   targets:                                  # must be the targets you trained with , including num channels and name.
-    ink:                                    # to the number of channels your model outputs
-      channels: 1
-      activation: "none"
-      weight: 1
+    - ink:                                    # to the number of channels your model outputs
+        channels: 1
+        activation: "none"
+        weight: 1
