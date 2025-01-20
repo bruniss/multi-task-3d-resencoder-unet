@@ -25,7 +25,7 @@ dataset_config:
   min_bbox_percent: 0.20      # optional, 0.97 [float] a percentage of the patch size that must be encompassed by a bbox containing all the labels in the patch
   min_labeled_ratio: 0.20     # optional, 0.15 [float] a percentage of the above bbox that must contain labeled data (ie: the density of the labels)
   use_cache: true             # optional, True [bool] whether to store a patch position cache. strongly recommended
-  cache_file: "./patch_cache" # optional, './' the location to store the cache
+  cache_file: "./patch_cache/wk" # optional, './' the location to store the cache
 
   # you do not need these two if you use the wk zarr stream link , only if you want to use the api (i would not)
   wk_url: ""
