@@ -10,19 +10,18 @@ from torch.utils.data import DataLoader
 from builders.build_network_from_config import NetworkFromConfig
 
 from dataloading.inference_dataset import InferenceDataset
-
+from configuration.config_manager import ConfigManager
 class ZarrInferenceHandler:
 
     def __init__(self, config_file: str, write_layers: bool, postprocess_only: bool = False):
 
-        #self.mgr = ConfigManager(config_file)
+        self.mgr = ConfigManager(config_file)
         self.postprocess_only = postprocess_only
         self.write_layers = write_layers
 
     def _build_model(self):
 
         model = NetworkFromConfig(self.mgr)
-        model.print_config()
 
         return model
 

@@ -3,4 +3,12 @@
 *.tif
 *.pyc
 /.idea
-/my_debug_dir
+*.env
+/wk/
+/tasks/
+/logs/
+
+/checkpoints/
+/data/
+/wk/
+*.jpg

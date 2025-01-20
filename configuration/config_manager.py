@@ -1,28 +1,19 @@
-import logging
-from datetime import datetime
-from types import SimpleNamespace
-from pathlib import Path
-import yaml
-
-#current_time = datetime.now()
-#formatted_time = current_time.strftime("%Y-%m-%d %H:%M")
-#logger = logging.basicConfig(filename=f'logs/{formatted_time}', level=logging.INFO)
 import yaml
 from pathlib import Path
 
 class ConfigManager:
     def __init__(self, config_file):
+        self._config_path = Path(config_file)
+
         with open(config_file, "r") as f:
             config = yaml.safe_load(f)
 
-        # Instead of SimpleNamespace, store them directly as dicts
         self.tr_info = config["tr_setup"]
         self.tr_configs = config["tr_config"]
         self.model_config = config["model_config"]
         self.dataset_config = config["dataset_config"]
         self.inference_config = config["inference_config"]
 
-        # Now read your "training setup" keys as dictionary lookups:
         self.model_name = self.tr_info.get("model_name", "Model")
         self.vram_max = float(self.tr_info.get("vram_max", 16))
         self.autoconfigure = bool(self.tr_info.get("autoconfigure", True))
@@ -31,6 +22,8 @@ class ConfigManager:
 
         ckpt_out_base = self.tr_info.get("ckpt_out_base", "./checkpoints/")
         self.ckpt_out_base = Path(ckpt_out_base)
+        if not self.ckpt_out_base.exists():
+            self.ckpt_out_base.mkdir(parents=True)
         ckpt_path = self.tr_info.get("checkpoint_path", None)
         self.checkpoint_path = Path(ckpt_path) if ckpt_path else None
 
@@ -54,15 +47,21 @@ class ConfigManager:
         self.min_bbox_percent = float(self.dataset_config.get("min_bbox_percent", 0.95))
         self.use_cache = bool(self.dataset_config.get("use_cache", True))
         self.cache_folder = Path(self.dataset_config.get("cache_folder", "patch_cache"))
-        self.in_channels = int(self.dataset_config.get("in_channels", 1))
-        self.tasks = self.dataset_config.get("targets", {})
-        self.volume_paths = self.dataset_config.get("volume_paths", [])
 
-        # For output channels, sum up the channels of each task:
+        self.targets = self.dataset_config.get("targets", {})
+
+        self.is_wk = self.dataset_config.get("is_wk", False)
+        self.is_wk_zarr_link = self.dataset_config.get("is_wk_zarr_link", False)
+        self.wk_url = self.dataset_config.get("wk_url", None)
+        self.wk_token = self.dataset_config.get("wk_token", None)
+
+        self.in_channels = 1
+        self.spacing= [1, 1, 1]
         self.out_channels = ()
-        for _, task_info in self.tasks.items():
-            self.out_channels += (task_info["channels"],)
-        self.num_tasks = len(self.tasks)
+        for target_name, task_info in self.targets.items():
+            if 'out_channels' not in task_info:
+                raise ValueError(f"Target {target_name} is missing out_channels specification")
+            self.out_channels += (task_info['out_channels'],)
 
         # Inference config
         self.infer_checkpoint_path = self.inference_config.get("checkpoint_path", None)
@@ -76,6 +75,40 @@ class ConfigManager:
 
         self._print_summary()
 
+    def save_config(self):
+        """
+        Dump the current config (including any updates in model_config["final_config"])
+        to a YAML file in the same directory as the original config, but
+        with "_final" appended before the extension.
+
+        E.g. "my_config.yaml" -> "my_config_final.yaml"
+        """
+        # Reconstruct the full config dictionary
+        combined_config = {
+            "tr_setup": self.tr_info,
+            "tr_config": self.tr_configs,
+            "model_config": self.model_config,
+            "dataset_config": self.dataset_config,
+            "inference_config": self.inference_config,
+        }
+
+        # Figure out original path parts
+        original_stem = self._config_path.stem  # e.g. "my_config"
+        original_ext = self._config_path.suffix  # e.g. ".yaml"
+        original_parent = self._config_path.parent
+
+        # Create the new filename with "_final" inserted
+        final_filename = f"{original_stem}_final{original_ext}"
+
+        # Full path to the new file
+        final_path = original_parent / final_filename
+
+        # Write out the YAML
+        with final_path.open("w") as f:
+            yaml.safe_dump(combined_config, f, sort_keys=False)
+
+        print(f"Configuration saved to: {final_path}")
+
     def _print_summary(self):
         print("____________________________________________")
         print("Training Setup (tr_info):")
@@ -86,10 +119,6 @@ class ConfigManager:
         for k, v in self.tr_configs.items():
             print(f"  {k}: {v}")
 
-        print("\nModel Config (model_config):")
-        for k, v in self.model_config.items():
-            print(f"  {k}: {v}")
-
         print("\nDataset Config (dataset_config):")
         for k, v in self.dataset_config.items():
             print(f"  {k}: {v}")
@@ -98,6 +127,3 @@ class ConfigManager:
         for k, v in self.inference_config.items():
             print(f"  {k}: {v}")
         print("____________________________________________")
-
-
-

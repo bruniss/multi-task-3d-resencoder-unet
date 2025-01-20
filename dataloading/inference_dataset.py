@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from helpers import generate_positions
-from pytorch3dunet import Standardize
 
 class InferenceDataset(Dataset):
     def __init__(
@@ -22,7 +21,6 @@ class InferenceDataset(Dataset):
         self.input_format = input_format
         self.targets = targets
         self.patch_size = patch_size
-        self.normalization = Standardize(channelwise=False)
         self.overlap = overlap
         self.load_all = load_all
 
@@ -68,7 +66,6 @@ class InferenceDataset(Dataset):
         elif self.input_dtype == np.uint16:
             patch = patch.astype(np.float32) / 65535.0
 
-        patch = self.normalization(patch)
         patch = patch.astype(np.float32)
         patch = patch[np.newaxis, ...]
         patch = torch.from_numpy(patch)

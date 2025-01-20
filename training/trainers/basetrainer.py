@@ -9,6 +9,8 @@ from torch.utils.data import DataLoader, SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 
 from dataloading.dataset import ZarrSegmentationDataset3D
+from dataloading.wk_dataset import MultiTask3dDataset
+from dataloading.wk2_dataset import wkDataset
 from training.visualization.plotting import save_debug_gif, export_data_dict_as_tif
 from builders.build_network_from_config import NetworkFromConfig
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss, BCELoss
@@ -56,7 +58,7 @@ class BaseTrainer:
         }
 
         loss_fns = {}
-        for task_name, task_info in self.mgr.tasks.items():
+        for task_name, task_info in self.mgr.targets.items():
             loss_fn = task_info.get("loss_fn", "BCEDiceLoss")
             if loss_fn not in LOSS_FN_MAP:
                 raise ValueError(f"Loss function {loss_fn} not found in LOSS_FN_MAP. Add it to the mapping and try again.")
@@ -119,6 +121,8 @@ class BaseTrainer:
 
         return train_dataloader, val_dataloader
 
+
+
     def train(self):
 
         model = self._build_model()
@@ -133,6 +137,9 @@ class BaseTrainer:
         model = torch.compile(model)
 
         train_dataloader, val_dataloader = self._configure_dataloaders(dataset)
+
+        if model.save_config:
+            self.mgr.save_config()
 
         if self.debug_dataloader:
             export_data_dict_as_tif(
@@ -175,7 +182,7 @@ class BaseTrainer:
         for epoch in range(start_epoch, self.mgr.max_epoch):
             model.train()
 
-            train_running_losses = {t_name: 0.0 for t_name in self.mgr.tasks}
+            train_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
             pbar = tqdm(enumerate(train_dataloader), total=self.mgr.max_steps_per_epoch)
             steps = 0
 
@@ -208,7 +215,7 @@ class BaseTrainer:
                     for t_name, t_gt in targets_dict.items():
                         t_pred = outputs[t_name]
                         t_loss_fn = loss_fns[t_name]
-                        task_weight = self.mgr.tasks[t_name].get("weight", 1.0)
+                        task_weight = self.mgr.targets[t_name].get("weight", 1.0)
                         t_loss = t_loss_fn(t_pred, t_gt) * task_weight
 
                         total_loss += t_loss
@@ -232,7 +239,7 @@ class BaseTrainer:
                 steps += 1
 
                 desc_parts = []
-                for t_name in self.mgr.tasks:
+                for t_name in self.mgr.targets:
                     avg_t_loss = train_running_losses[t_name] / steps
                     desc_parts.append(f"{t_name}: {avg_t_loss:.4f}")
 
@@ -241,7 +248,7 @@ class BaseTrainer:
 
             pbar.close()
 
-            for t_name in self.mgr.tasks:
+            for t_name in self.mgr.targets:
                 epoch_avg = train_running_losses[t_name] / steps
                 writer.add_scalar(f"train/{t_name}_loss", epoch_avg, epoch)
             print(f"[Train] Epoch {epoch + 1} completed.")
@@ -268,7 +275,7 @@ class BaseTrainer:
             if epoch % 1 == 0:
                 model.eval()
                 with torch.no_grad():
-                    val_running_losses = {t_name: 0.0 for t_name in self.mgr.tasks}
+                    val_running_losses = {t_name: 0.0 for t_name in self.mgr.targets}
                     val_steps = 0
 
                     pbar = tqdm(enumerate(val_dataloader), total=self.mgr.max_val_steps_per_epoch)
@@ -314,13 +321,13 @@ class BaseTrainer:
                                     input_volume=inputs_first,
                                     targets_dict=targets_dict_first,
                                     outputs_dict=outputs_dict_first,
-                                    tasks_dict=self.mgr.tasks, # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
+                                    tasks_dict=self.mgr.targets, # your dictionary, e.g. {"sheet": {"activation":"sigmoid"}, "normals": {"activation":"none"}}
                                     epoch=epoch,
                                     save_path=f"{self.mgr.model_name}_debug.gif"
                                 )
 
                     desc_parts = []
-                    for t_name in self.mgr.tasks:
+                    for t_name in self.mgr.targets:
                         avg_loss_for_t = val_running_losses[t_name] / val_steps
                         desc_parts.append(f"{t_name} {avg_loss_for_t:.4f}")
                     desc_str = "Val: " + " | ".join(desc_parts)
@@ -329,7 +336,7 @@ class BaseTrainer:
                 pbar.close()
 
                 # Final avg for each task
-                for t_name in self.mgr.tasks:
+                for t_name in self.mgr.targets:
                     val_avg = val_running_losses[t_name] / val_steps
                     print(f"Task '{t_name}', epoch {epoch + 1} avg val loss: {val_avg:.4f}")
 

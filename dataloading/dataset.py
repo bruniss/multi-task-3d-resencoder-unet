@@ -11,7 +11,7 @@ import albumentations as A
 from pathlib import Path
 from tqdm import tqdm
 
-from helpers import _find_valid_patches
+from helpers import find_valid_patches
 from volumentations import Compose as vCompose
 from volumentations import ElasticTransform
 
@@ -20,7 +20,7 @@ class ZarrSegmentationDataset3D(Dataset):
         self.mgr = mgr
         self.model_name = mgr.model_name
         self.volume_paths = mgr.volume_paths  # array of dicts
-        self.tasks = mgr.tasks
+        self.targets = mgr.targets
         self.patch_size = mgr.train_patch_size
         self.min_labeled_ratio = mgr.min_labeled_ratio
         self.min_bbox_percent = mgr.min_bbox_percent
@@ -42,7 +42,7 @@ class ZarrSegmentationDataset3D(Dataset):
                 "ref_label_key": ref_label_key
             }
             # For each task, remember its path
-            for task_name in self.tasks.keys():
+            for task_name in self.targets.keys():
                 if task_name in vol_info:
                     vol_dict["targets_path"][task_name] = vol_info[task_name]
                 else:
@@ -76,7 +76,7 @@ class ZarrSegmentationDataset3D(Dataset):
                     ref_label_zarr = zarr.open(ref_label_path, mode='r')
 
                 # Find the valid patches
-                vol_patches = _find_valid_patches(
+                vol_patches = find_valid_patches(
                     ref_label_zarr,
                     patch_size=self.patch_size,
                     bbox_threshold=self.min_bbox_percent,
@@ -213,7 +213,7 @@ class ZarrSegmentationDataset3D(Dataset):
             data_dict["image"] = data_dict["image"][None, ...]
         data_dict["image"] = torch.from_numpy(np.ascontiguousarray(data_dict["image"]))
 
-        for task_name in self.tasks.keys():
+        for task_name in self.targets.keys():
             tgt = data_dict[task_name]
             if tgt.ndim == 3 and task_name.lower() != "normals":
                 tgt = tgt[None, ...]
