@@ -71,11 +71,11 @@ class Encoder(nn.Module,):
 
         is_residual = basic_block in ['BasicBlockD', 'BottleneckBlockD']
 
-        if bottleneck_block is 'BottleneckBlockD':
+        if bottleneck_block == 'BottleneckBlockD':
             block = BottleneckD
-        if basic_block is 'BasicBlockD':
+        if basic_block == 'BasicBlockD':
             block = BasicBlockD
-        if basic_block is 'ConvBlock':
+        if basic_block == 'ConvBlock':
             block = None
 
         if do_stem:

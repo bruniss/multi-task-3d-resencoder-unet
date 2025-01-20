@@ -21,16 +21,26 @@ class NetworkFromConfig(nn.Module):
     def __init__(self, mgr):
         super().__init__()
         self.mgr = mgr
-        self.tasks = mgr.tasks
+        self.targets = mgr.targets
         self.patch_size = mgr.train_patch_size
         self.batch_size = mgr.train_batch_size
         self.in_channels = mgr.in_channels
         self.vram_target = mgr.vram_max
         self.autoconfigure = mgr.autoconfigure
 
-        # Read from mgr.model_config as a dict
-        model_config = mgr.model_config
-        self.model_name = model_config.get("model_name", "Model")
+        # we use the final config if it exists, otherwise falling back to the original
+        if "final_config" in mgr.model_config:
+            self.save_config = False
+            print("--- Found 'final_config' in model_config. Overriding with final_config ---")
+            model_config = mgr.model_config["final_config"]
+
+            # Force autoconfigure to False
+            mgr.autoconfigure = False
+        else:
+            # Otherwise proceed as normal
+            self.save_config = True
+            model_config = mgr.model_config
+        self.model_name = mgr.model_name
 
         # the defaults below are essentially straight copied from nnunetv2 base resnet encoder with regular conv decoder
         # you can swap these out , this is good for about 8gb -- nnunet does not really increase feature maps when scaling for
@@ -46,7 +56,7 @@ class NetworkFromConfig(nn.Module):
 
             num_pool_per_axis, pool_op_kernel_sizes, conv_kernel_sizes, final_patch_size, must_div = \
                 get_pool_and_conv_props(
-                    spacing=(1.0, 1.0, 1.0),
+                    spacing=mgr.spacing,
                     patch_size=mgr.train_patch_size,
                     min_feature_map_size=4,
                     max_numpool=999999
@@ -68,16 +78,6 @@ class NetworkFromConfig(nn.Module):
             self.n_blocks_per_stage = get_n_blocks_per_stage(self.num_stages)
             self.n_conv_per_stage_decoder = [1] * (self.num_stages - 1)
             self.strides = pool_op_kernel_sizes
-
-            print(f"------------------------------------------------------------")
-            print(f"Final Autoconfigured Parameters:")
-            print(f"num_stages: {self.num_stages}")
-            print(f"features_per_stage: {self.features_per_stage}")
-            print(f"n_blocks_per_stage: {self.n_blocks_per_stage}")
-            print(f"n_conv_per_stage_decoder: {self.n_conv_per_stage_decoder}")
-            print(f"strides: {self.strides}")
-            print(f"final_patch_size: {final_patch_size}")
-            print("-------------------------------------------------------------")
 
         else:
             print("--- Configuring network from config file ---")
@@ -133,6 +133,14 @@ class NetworkFromConfig(nn.Module):
             else:
                 self.kernel_sizes = model_config["kernel_sizes"]
 
+
+            if "pool_op_kernel_sizes" not in model_config:
+                raise ValueError(
+                    "autoconfigure=False, but 'pool_op_kernel_sizes' was not provided in the config!"
+                )
+            else:
+                self.pool_op_kernel_sizes = model_config["pool_op_kernel_sizes"]
+
             if "n_conv_per_stage_decoder" not in model_config:
                 raise ValueError(
                     "autoconfigure=False, but 'n_conv_per_stage_decoder' was not provided in the config!"
@@ -146,20 +154,6 @@ class NetworkFromConfig(nn.Module):
                 )
             else:
                 self.strides = model_config["strides"]
-
-            print("-------------------------------------------------------------")
-            print(f"Final Manual Parameters:")
-            print(f"use_timm_encoder: {self.use_timm}")
-            print(f"basic_encoder_block: {self.basic_encoder_block}")
-            print(f"basic_decoder_block: {self.basic_decoder_block}")
-            print(f"bottleneck_block: {self.bottleneck_block}")
-            print(f"features_per_stage: {self.features_per_stage}")
-            print(f"num_stages: {self.num_stages}")
-            print(f"n_blocks_per_stage: {self.n_blocks_per_stage}")
-            print(f"kernel_sizes: {self.kernel_sizes}")
-            print(f"n_conv_per_stage_decoder: {self.n_conv_per_stage_decoder}")
-            print(f"strides: {self.strides}")
-            print("-------------------------------------------------------------")
 
         # these are not currently configurable in the yaml, we read these, but we override them below based on patch dims
         # these are placeholders for when these become more configurable , but they are solid presets
@@ -204,13 +198,13 @@ class NetworkFromConfig(nn.Module):
             self.norm_op = nn.InstanceNorm3d
             self.dropout_op = nn.Dropout3d
 
-        # convert activation strings to actual classes
-        if self.nonlin == "nn.LeakyReLU":
+        if self.nonlin in ["nn.LeakyReLU", "LeakyReLU"]:
             self.nonlin = nn.LeakyReLU
             self.nonlin_kwargs = {"negative_slope": 1e-2, "inplace": True}
-        elif self.nonlin == "nn.ReLU":
+        elif self.nonlin in ["nn.ReLU", "ReLU"]:
             self.nonlin = nn.ReLU
             self.nonlin_kwargs = {"inplace": True}
+        ...
 
         if self.bottleneck_block == "BottleneckBlockD":
             if self.bottleneck_channels is None:
@@ -261,12 +255,12 @@ class NetworkFromConfig(nn.Module):
         self.task_decoders = nn.ModuleDict()
         self.task_activations = nn.ModuleDict()
 
-        for task_name, task_info in self.tasks.items():
-            out_channels = task_info["channels"]  # number of channels for this task's output
-            activation_str = task_info.get("activation", "none")
+        for target_name, target_info in self.targets.items():
+            out_channels = target_info["out_channels"]  # number of channels for this task's output
+            activation_str = target_info.get("activation", "none")
 
             # one decoder per task
-            self.task_decoders[task_name] = Decoder(
+            self.task_decoders[target_name] = Decoder(
                 encoder=self.shared_encoder,
                 basic_block=self.basic_decoder_block,
                 num_classes=out_channels,
@@ -274,30 +268,35 @@ class NetworkFromConfig(nn.Module):
                 deep_supervision=False
             )
 
-            self.task_activations[task_name] = get_activation_module(activation_str)
+            self.task_activations[target_name] = get_activation_module(activation_str)
 
         print(f"--- NetworkFromConfig initialized with the following settings ---")
         print(f"model_name: {self.model_name}")
         print(f"use_timm_encoder: {self.use_timm}")
+        print(f"op_dims: {self.op_dims}")
         print(f"basic_encoder_block: {self.basic_encoder_block}")
         print(f"basic_decoder_block: {self.basic_decoder_block}")
-        print(f"features_per_stage: {self.features_per_stage}")
-        print(f"num_stages: {self.num_stages}")
-        print(f"n_blocks_per_stage: {self.n_blocks_per_stage}")
-        print(f"n_conv_per_stage_decoder: {self.n_conv_per_stage_decoder}")
         print(f"bottleneck_block: {self.bottleneck_block}")
-        print(f"op_dims: {self.op_dims}")
-        print(f"kernel_sizes: {self.kernel_sizes}")
-        print(f"conv_bias: {self.conv_bias}")
-        print(f"norm_op_kwargs: {self.norm_op_kwargs}")
-        print(f"dropout_op_kwargs: {self.dropout_op_kwargs}")
-        print(f"nonlin: {self.nonlin}")
-        print(f"nonlin_kwargs: {self.nonlin_kwargs}")
+        print(f"bottleneck_channels: {self.bottleneck_channels}")
+        print(f"num_stages: {self.num_stages}")
+        print(f"features_per_stage: {self.features_per_stage}")
+        print(f"n_blocks_per_stage: {self.n_blocks_per_stage}")
         print(f"strides: {self.strides}")
         print(f"return_skips: {self.return_skips}")
         print(f"do_stem: {self.do_stem}")
         print(f"stem_channels: {self.stem_channels}")
-        print(f"bottleneck_channels: {self.bottleneck_channels}")
+        print(f"n_conv_per_stage_decoder: {self.n_conv_per_stage_decoder}")
+        print(f"conv_op: {self.conv_op}")
+        print(f"kernel_sizes: {self.kernel_sizes}")
+        print(f"conv_bias: {self.conv_bias}")
+        print(f"pool_op: {self.pool_op}")
+        print(f"pool_op_kernel_sizes: {self.pool_op_kernel_sizes}")
+        print(f"norm_op: {self.norm_op}")
+        print(f"norm_op_kwargs: {self.norm_op_kwargs}")
+        print(f"dropout_op: {self.dropout_op}")
+        print(f"dropout_op_kwargs: {self.dropout_op_kwargs}")
+        print(f"nonlin: {self.nonlin}")
+        print(f"nonlin_kwargs: {self.nonlin_kwargs}")
         print(f"stochastic_depth_p: {self.stochastic_depth_p}")
         print(f"squeeze_excitation: {self.squeeze_excitation}")
         print(f"squeeze_excitation_reduction_ratio: {self.squeeze_excitation_reduction_ratio}")
@@ -306,8 +305,50 @@ class NetworkFromConfig(nn.Module):
         print(f"in_channels (from mgr): {self.in_channels}")
         print(f"vram_target (from mgr): {self.vram_target}")
         print(f"autoconfigure (from mgr): {self.autoconfigure}")
-        print(f"tasks (from mgr): {self.tasks}")
+        print(f"targets (from mgr): {self.targets}")
         print("-------------------------------------------------------------")
+
+        self.final_config = {
+            "model_name": self.model_name,
+            "use_timm_encoder": self.use_timm,
+            "basic_encoder_block": self.basic_encoder_block,
+            "basic_decoder_block": self.basic_decoder_block,
+            "bottleneck_block": self.bottleneck_block,
+            "features_per_stage": self.features_per_stage,
+            "num_stages": self.num_stages,
+            "n_blocks_per_stage": self.n_blocks_per_stage,
+            "n_conv_per_stage_decoder": self.n_conv_per_stage_decoder,
+            "kernel_sizes": self.kernel_sizes,
+            "pool_op": self.pool_op.__name__,
+            "pool_op_kernel_sizes": self.pool_op_kernel_sizes,
+            "conv_op": self.conv_op.__name__,
+            "conv_bias": self.conv_bias,
+            "norm_op": self.norm_op.__name__,
+            "norm_op_kwargs": self.norm_op_kwargs,
+            "dropout_op": self.dropout_op.__name__,
+            "dropout_op_kwargs": self.dropout_op_kwargs,
+            "nonlin": self.nonlin.__name__,
+            "nonlin_kwargs": self.nonlin_kwargs,
+            "strides": self.strides,
+            "return_skips": self.return_skips,
+            "do_stem": self.do_stem,
+            "stem_channels": self.stem_channels,
+            "bottleneck_channels": self.bottleneck_channels,
+            "stochastic_depth_p": self.stochastic_depth_p,
+            "squeeze_excitation": self.squeeze_excitation,
+            "squeeze_excitation_reduction_ratio": self.squeeze_excitation_reduction_ratio,
+            "op_dims": self.op_dims,
+            "patch_size": self.patch_size,
+            "batch_size": self.batch_size,
+            "in_channels": self.in_channels,
+            "vram_target": self.vram_target,
+            "autoconfigure": self.autoconfigure,
+            "targets": self.targets
+        }
+
+        if self.save_config:
+            mgr.model_config["final_config"] = self.final_config
+
 
     def forward(self, x):
         # Forward through the shared encoder
