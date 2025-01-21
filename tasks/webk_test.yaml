@@ -28,8 +28,8 @@ dataset_config:
   cache_file: "./patch_cache" # optional, './' the location to store the cache
 
   # you do not need these two if you use the wk zarr stream link , only if you want to use the api (i would not)
-  wk_url: ""
-  wk_token: ""
+  wk_url: "http://dl.ash2txt.org:8080/"
+  wk_token: "64ZRFDrbuWkM5FMv96cdnQ"
 
   targets:
     ink:
