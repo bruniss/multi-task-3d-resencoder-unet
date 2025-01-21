@@ -7,8 +7,11 @@
 /wk/
 /tasks/
 /logs/
-
+/tasks/*
 /checkpoints/
 /data/
-/wk/
+/wk/*
 *.jpg
+
+
+

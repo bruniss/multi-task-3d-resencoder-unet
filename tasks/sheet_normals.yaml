@@ -1,62 +1,65 @@
-tr_params:
-  model_name: SheetNorm
-  patch_size: [64, 192, 192]
-  vram_max: 24000
-  batch_size: 4
-  tr_val_split: 0.80
-  ignore_label: null
-  loss_only_on_label: false
+tr_setup:
+  model_name: sheet2
+  vram_max: 22000
+  autoconfigure: true
+  tr_val_split: 0.9
   dilate_label: false
-  label_smoothing: 0.1
-  initial_lr: 0.001
-  weight_decay: 0.0001
+  load_weights_only: false
+  ckpt_out_base: ./checkpoints
+  tensorboard_log_dir: ./logs
+tr_config:
+  optimizer: AdamW
+  patch_size:
+  - 128
+  - 128
+  - 128
+  batch_size: 3
   max_steps_per_epoch: 500
   max_val_steps_per_epoch: 25
   max_epoch: 500
-  gradient_accumulation: 1
-  load_weights_only: false
-  checkpoint_path: /mnt/raid_hdd/models/normals/checkpoints/nofliprotate/SheetNorm_.pth
-  ckpt_out_base: /mnt/raid_hdd/models/normals/checkpoints/nofliprotate
-  optimizer: AdamW
-  num_dataloader_workers: 4
-  tensorboard_log_dir: /home/sean/Desktop/tensorboard
-
-
 model_config:
-  f_maps: [32, 64, 128, 256, 320, 528]
-  basic_module: "ResNetBlockSE"
-  se_module: 'scse'
+  use_timm_encoder: false
+  timm_encoder_class: null
 
 dataset_config:
+  # theres a bit of a gotcha here if using multi-channel data, the first volume listed is the one used for valid patch finding,
+  # so the first one in each target needs to be single channel if 4d or only 3d
   min_labeled_ratio: 0.07
   min_bbox_percent: 0.95
   use_cache: true
   cache_file: /home/sean/Documents/GitHub/VC-Surface-Models/models/64_192_192_patch_cache_ands4.json
-  volume_paths:
-    - input: /mnt/raid_nvme/s1.zarr
-      sheet: /mnt/raid_nvme/datasets/1-voxel-sheet_slices-closed.zarr/0.zarr
-      normals: /home/sean/Documents/GitHub/VC-Surface-Models/models/normals.zarr
-      ref_label: sheet
-    - input: /mnt/raid_nvme/s4.zarr
-      sheet: /home/sean/Documents/GitHub/VC-Surface-Models/models/normals/s4_sheet.zarr/volume.zarr
-      normals: /home/sean/Documents/GitHub/VC-Surface-Models/models/normals/s4_normals.zarr/volume.zarr
-      ref_label: sheet
   targets:
     sheet:
-      channels: 1
+      in_channels: 1
+      out_channels: 1
       activation: none
       weight: 1
       loss_fn: BCEDiceLoss
       loss_kwargs:
         alpha: 0.5
         beta: 0.5
+      volumes:
+        - data_volume: "/mnt/raid_nvme/s4.zarr"
+          label_volume: "/home/sean/Documents/GitHub/VC-Surface-Models/models/normals/s4_sheet.zarr/volume.zarr"
+          format: "zarr_local"
+        - data_volume: "/mnt/raid_nvme/s1.zarr"
+          label_volume: "/mnt/raid_nvme/datasets/1-voxel-sheet_slices-closed.zarr/0.zarr"
+          format: "zarr_local"
     normals:
-      channels: 3
+      in_channels: 3
+      out_channels: 3
       activation: none
       weight: 1
       loss_fn: MaskedCosineLoss
+      volumes:
+        - data_volume: "/mnt/raid_nvme/s4.zarr"
+          label_volume: "/home/sean/Documents/GitHub/VC-Surface-Models/models/normals/s4_normals.zarr/volume.zarr"
+          format: "zarr_local"
+        - data_volume: "/mnt/raid_nvme/s1.zarr"
+          label_volume: "/home/sean/Documents/GitHub/VC-Surface-Models/models/normals.zarr"
+          format: "zarr_local"
 
-inference_params:
+inference_config:
   patch_size: [64, 192, 192]
   batch_size: 2
   checkpoint_path: /mnt/raid_hdd/models/normals/checkpoints/final_models/sheet_and_norms/SheetNorm_400.pth

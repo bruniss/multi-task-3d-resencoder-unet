@@ -7,9 +7,12 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim import AdamW, SGD
 from torch.utils.data import DataLoader, SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
+from helpers import init_weights_he
+import albumentations as A
+import volumentations as V
 
-from dataloading.dataset import ZarrSegmentationDataset3D
-from dataloading.wk_dataset import MultiTask3dDataset
+from dataloading.dataset_old import ZarrSegmentationDataset3D
+from dataloading.dataset import MultiTask3dDataset
 from dataloading.wk2_dataset import wkDataset
 from training.visualization.plotting import save_debug_gif, export_data_dict_as_tif
 from builders.build_network_from_config import NetworkFromConfig
@@ -31,13 +34,50 @@ class BaseTrainer:
     def _build_model(self):
 
         model = NetworkFromConfig(self.mgr)
+        model.apply(lambda module: init_weights_he(module, neg_slope=1e-2))
 
         return model
+
+    def _compose_augmentations(self):
+
+        # --- Augmentations (2D + 3D) ---
+        image_transforms = A.Compose([
+            A.OneOf([
+                A.RandomBrightnessContrast(),
+                A.Illumination(),
+            ], p=0.3),
+            A.OneOf([
+                A.MultiplicativeNoise(),
+                A.GaussNoise()
+            ], p=0.35),
+            A.OneOf([
+                A.MotionBlur(),
+                A.Defocus(),
+                A.Downscale(),
+                A.AdvancedBlur()
+            ], p=0.4),
+        ], p=1.0)
+
+        vol_transform = A.Compose([
+            A.CoarseDropout3D(
+                fill=0.5,
+                num_holes_range=(1, 4),
+                hole_depth_range=(0.1, 0.4),
+                hole_height_range=(0.1, 0.4),
+                hole_width_range=(0.1, 0.4)
+            )
+        ], p=0.5)
+
+        return image_transforms, vol_transform
 
     # --- configure dataset --- #
     def _configure_dataset(self):
 
-        dataset = ZarrSegmentationDataset3D(mgr=self.mgr)
+        image_transforms, volume_transforms = self._compose_augmentations()
+
+        dataset = MultiTask3dDataset(mgr=self.mgr,
+                                     image_transforms=image_transforms,
+                                     volume_transforms=volume_transforms)
 
         return dataset
 

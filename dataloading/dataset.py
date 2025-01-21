@@ -1,227 +1,231 @@
-from typing import Tuple, Union, List
-import os
-import zarr
-import fsspec
-import json
-import torch
-from torch.utils.data import Dataset
-import numpy as np
-from skimage.morphology import dilation, ball
-import albumentations as A
 from pathlib import Path
-from tqdm import tqdm
+import os
+import json
+import numpy as np
+import torch
+import fsspec
+import zarr
+from torch.utils.data import Dataset
+from skimage.morphology import dilation, ball
 
-from helpers import find_valid_patches
-from volumentations import Compose as vCompose
-from volumentations import ElasticTransform
+from helpers import find_valid_patches, find_valid_patches_xyz, pad_or_crop_3d, pad_or_crop_4d
+from dataloading.wk_helper import read_webk_dataset, slice_and_reorder_volume
 
-class ZarrSegmentationDataset3D(Dataset):
-    def __init__(self, mgr):
+class MultiTask3dDataset(Dataset):
+    def __init__(self,
+                 mgr,
+                 image_transforms=None,
+                 volume_transforms=None):
+        super().__init__()
         self.mgr = mgr
+
         self.model_name = mgr.model_name
-        self.volume_paths = mgr.volume_paths  # array of dicts
-        self.targets = mgr.targets
+        self.targets = mgr.targets               # e.g. {"ink": {...}, "normals": {...}}
         self.patch_size = mgr.train_patch_size
         self.min_labeled_ratio = mgr.min_labeled_ratio
         self.min_bbox_percent = mgr.min_bbox_percent
         self.dilate_label = mgr.dilate_label
+
         self.use_cache = mgr.use_cache
         self.cache_folder = mgr.cache_folder
-
-        # We will store only paths (not open Zarr objects) here:
-        self.volumes = []
-        for vol_idx, vol_info in enumerate(self.volume_paths):
-            ref_label_key = vol_info.get("ref_label", "sheet")
-            # We'll keep them as strings so we can open them later in __getitem__
-            # this is so we can easily use fsspec for http zarrs in a fork-safe manner
-            # since a zarr once open in fsspec is not fork-safe and will error
-            # minor overhead here, but it is what it is
-            vol_dict = {
-                "input_path": vol_info["input"],
-                "targets_path": {},
-                "ref_label_key": ref_label_key
-            }
-            # For each task, remember its path
-            for task_name in self.targets.keys():
-                if task_name in vol_info:
-                    vol_dict["targets_path"][task_name] = vol_info[task_name]
-                else:
-                    raise ValueError(f"Volume {vol_idx} missing path for '{task_name}'")
-
-            self.volumes.append(vol_dict)
-
-        # Build or load the patch cache
         self.cache_file = Path(f"{self.cache_folder}/"
                                f"{self.model_name}_"
                                f"{self.patch_size[0]}_{self.patch_size[1]}_{self.patch_size[2]}_cache.json")
 
-        self.all_valid_patches = []
+        self.image_transforms = image_transforms
+        self.volume_transforms = volume_transforms
+
+        # This dict looks like:
+        # {
+        #   "ink": [
+        #       {
+        #         'data': {'label': <zarr array>, 'data': <zarr array>},
+        #         'out_channels': 1,
+        #         ...
+        #       },
+        #       { ... },
+        #   ],
+        #   "normals": [ ... ],
+        # }
+        self.target_volumes = {}
+        self.valid_patches = []
+        self._initialize_volumes()
+        self._get_valid_patches()
+
+    def _initialize_volumes(self):
+        for target_name, target_config in self.targets.items():
+            self.target_volumes[target_name] = []
+
+            for volume in target_config['volumes']:
+                volume_type = volume.get('format')
+                if not volume_type:
+                    raise ValueError(f"Volume type not specified for {target_name}")
+
+                # Example: "zarr_local"
+                if volume_type == 'zarr_local':
+                    label_zarr_path = volume["label_volume"]
+                    data_zarr_path = volume["data_volume"]
+                    volume_data = {
+                        "label": zarr.open(label_zarr_path, mode='r'),
+                        "data": zarr.open(data_zarr_path, mode='r')
+                    }
+
+                elif volume_type == 'wk_api':
+                    # e.g. read_webk_dataset
+                    annotation_id = volume.get('annotation_id', '678d7e580100001956ee6494')
+                    volume_data = read_webk_dataset(
+                        self.mgr.wk_url,
+                        self.mgr.wk_token,
+                        annotation_id=annotation_id,
+                        annotation_name=volume.get('label_id'),
+                        image_name=volume.get('data_id'),
+                    )
+
+                else:
+                    raise ValueError(f"Unsupported volume type {volume_type}")
+
+                volume_info = {
+                    'data': volume_data,
+                    'out_channels': target_config.get('out_channels', 1),
+                    'shape': volume.get('shape', 'zyx')
+                }
+                self.target_volumes[target_name].append(volume_info)
+
+    def _get_valid_patches(self):
         if self.use_cache and self.cache_file.exists():
             with open(self.cache_file, 'r') as f:
-                self.all_valid_patches = json.load(f)
-            print(f"Loaded {len(self.all_valid_patches)} patches from cache.")
-        else:
-            print("Computing valid patches from scratch...")
-            for vol_idx, vol_dict in enumerate(self.volumes):
-                ref_label_key = vol_dict["ref_label_key"]
-                # Only open the reference label Zarr for bounding-box scanning:
-                ref_label_path = vol_dict["targets_path"][ref_label_key]
+                self.valid_patches = json.load(f)
+            print(f"Loaded {len(self.valid_patches)} patches from cache.")
+            return
 
-                # If it's HTTP, use fsspec.filesystem("http") -> get_mapper()
-                if ref_label_path.startswith("http"):
-                    http_fs = fsspec.filesystem("http")
-                    store = http_fs.get_mapper(ref_label_path)
-                    ref_label_zarr = zarr.open(store, mode='r')
-                else:
-                    ref_label_zarr = zarr.open(ref_label_path, mode='r')
+        print("Computing valid patches from scratch...")
+        ref_target = list(self.target_volumes.keys())[0]
 
-                # Find the valid patches
-                vol_patches = find_valid_patches(
-                    ref_label_zarr,
+        for vol_idx, volume_info in enumerate(self.target_volumes[ref_target]):
+            label_data = volume_info['data']['label']   # The "label" array
+            shape_format = volume_info.get('shape', 'zyx')
+
+            if shape_format.lower() == 'zyx':
+                patches = find_valid_patches(
+                    label_data,
                     patch_size=self.patch_size,
                     bbox_threshold=self.min_bbox_percent,
-                    label_threshold=self.min_labeled_ratio
+                    label_threshold=self.min_labeled_ratio,
                 )
-                # Done reading, close right away
-                ref_label_zarr.store.close()
+            elif shape_format.lower() == 'xyz':
+                pz, py, px = self.patch_size
+                patch_size_xyz = (px, py, pz)
+                patches = find_valid_patches_xyz(
+                    label_data,
+                    patch_size_xyz=patch_size_xyz,
+                    bbox_threshold=self.min_bbox_percent,
+                    label_threshold=self.min_labeled_ratio,
+                )
+            else:
+                raise ValueError(f"Unknown shape format {shape_format}.")
 
-                # Tag each patch with volume index
-                for p in vol_patches:
-                    p["volume_idx"] = vol_idx
-                self.all_valid_patches.extend(vol_patches)
+            for p in patches:
+                self.valid_patches.append({
+                    "volume_index": vol_idx,
+                    "position": p["start_pos"]  # (z,y,x)
+                })
 
-            if self.use_cache:
-                cache_parent = os.path.dirname(str(self.cache_file))
-                os.makedirs(cache_parent, exist_ok=True)
-                with open(self.cache_file, 'w') as f:
-                    json.dump(self.all_valid_patches, f)
-                print(f"Saved {len(self.all_valid_patches)} patches to cache.")
+        # Optionally cache it
+        if self.use_cache:
+            os.makedirs(self.cache_folder, exist_ok=True)
+            with open(self.cache_file, 'w') as f:
+                json.dump(self.valid_patches, f)
+            print(f"Saved {len(self.valid_patches)} patches to cache.")
 
     def __len__(self):
-        return len(self.all_valid_patches)
+        return len(self.valid_patches)
 
-    def __getitem__(self, idx):
-        patch_info = self.all_valid_patches[idx]
-        vol_idx = patch_info["volume_idx"]
-
-        z0, y0, x0 = patch_info["start_pos"]
+    def __getitem__(self, index):
+        patch_info = self.valid_patches[index]
+        z, y, x = patch_info["position"]
         dz, dy, dx = self.patch_size
-        patch_slice = np.s_[z0:z0 + dz, y0:y0 + dy, x0:x0 + dx]
+        vol_idx = patch_info["volume_index"]
 
-        vol_dict = self.volumes[vol_idx]
-        input_path = vol_dict["input_path"]
+        data_dict = {}
 
-        # === OPEN THE INPUT ZARR HERE (per worker) ===
-        if input_path.startswith("http"):
-            http_fs = fsspec.filesystem("http")
-            in_store = http_fs.get_mapper(input_path)
-            input_zarr = zarr.open(in_store, mode='r')
-            input_zarr = input_zarr[0]
-        else:
-            input_zarr = zarr.open(input_path, mode='r')
+        for t_name, volumes_list in self.target_volumes.items():
+            volume_info = volumes_list[vol_idx]
+            vdata = volume_info['data']
+            shape_format = volume_info['shape']
+            out_c = volume_info['out_channels']
 
-        # get the patch
-        input_data = input_zarr[patch_slice]
-        og_input_dtype = input_data.dtype
-        input_data = input_data.astype(np.float32)
+            label_arr = vdata['label']
+            img_arr = vdata['data']
 
-        if og_input_dtype == np.uint8:
-            input_data /= 255.0
-        elif og_input_dtype == np.uint16:
-            input_data /= 65535.0
+            # 1) Slice label patch
+            label_patch = slice_and_reorder_volume(
+                label_arr, shape_format, [z, y, x], [dz, dy, dx]
+            ).astype(np.float32)
 
-        data_dict = {"image": input_data}
-
-        # === OPEN EACH TARGET TASK ZARR HERE (per worker) ===
-        for task_name, task_path in vol_dict["targets_path"].items():
-            # open that store
-            if task_path.startswith("http"):
-                http_fs = fsspec.filesystem("http")
-                t_store = http_fs.get_mapper(task_path)
-                t_arr = zarr.open(t_store, mode='r')
-            else:
-                t_arr = zarr.open(task_path, mode='r')
-
-            t_patch = t_arr[patch_slice].astype(np.float32)
-
-            # If normals, special scaling
-            if task_name.lower() == "normals":
-                if t_arr.dtype == np.uint16:
-                    t_patch = (t_patch / 32767.5) - 1.0
+            # 2) If "normals", do [-1..1] scaling & transpose if 4D
+            if t_name.lower() == "normals":
+                # scale from [0..1] => [-1..1], or from uint16 => [-1..1]
+                if label_arr.dtype == np.uint16:
+                    label_patch = (label_patch / 32767.5) - 1.0
                 else:
-                    t_patch = (t_patch * 2.0) - 1.0
-                # If shape is (Z, Y, X, C), transpose
-                if t_patch.ndim == 4:
-                    t_patch = t_patch.transpose(3, 0, 1, 2).copy()
+                    label_patch = (label_patch * 2.0) - 1.0
+
+                # if shape is (Z, Y, X, C) => (C, Z, Y, X)
+                if label_patch.ndim == 4:
+                    label_patch = label_patch.transpose(3, 0, 1, 2).copy()
+
             else:
-                # scale to [0,1]
-                if t_arr.dtype == np.uint8:
-                    t_patch /= 255.0
-                elif t_arr.dtype == np.uint16:
-                    t_patch /= 65535.0
+                # Typical clamp to [0,1]
+                label_patch = np.clip(label_patch, 0, 1)
 
-                if self.dilate_label:
-                    t_patch = (t_patch > 0).astype(np.float32)
-                    t_patch = dilation(t_patch, ball(5))
+                # Possibly do morphological dilation if single-channel
+                if self.dilate_label and label_patch.ndim == 3:
+                    label_patch = (label_patch > 0.5).astype(np.float32)
+                    label_patch = dilation(label_patch, ball(5))
 
-            data_dict[task_name] = t_patch
+            # 3) Pad/crop so final shape is (out_c, D, H, W)
+            #    (If label_patch is 3D => (D,H,W), if 4D => (C,D,H,W))
+            if label_patch.ndim == 3:
+                # => (dz, dy, dx)
+                label_patch = pad_or_crop_3d(label_patch, (dz, dy, dx))
+                # if out_c=1, maybe add channel
+                if out_c == 1:
+                    label_patch = label_patch[None, ...]  # => (1, D, H, W)
+            else:
+                # => (C, D, H, W)
+                label_patch = pad_or_crop_4d(label_patch, (out_c, dz, dy, dx))
 
-            # Close target store
-            t_arr.store.close()
+            label_patch = np.ascontiguousarray(label_patch).copy()
 
-        # we can now close the input store too
-        input_zarr.store.close()
+            # 4) Slice the image patch once
+            if "image" not in data_dict:
+                img_patch = slice_and_reorder_volume(
+                    img_arr, shape_format, [z, y, x], [dz, dy, dx]
+                ).astype(np.float32)
 
-        # --- Augmentations (2D + 3D) ---
-        img_transform = A.Compose([
-            A.OneOf([
-                A.RandomBrightnessContrast(),
-                A.Illumination(),
-            ], p=0.3),
-            A.OneOf([
-                A.MultiplicativeNoise(),
-                A.GaussNoise()
-            ], p=0.35),
-            A.OneOf([
-                A.MotionBlur(),
-                A.Defocus(),
-                A.Downscale(),
-                A.AdvancedBlur()
-            ], p=0.4),
-        ], p=1.0)
+                # pad/crop image
+                img_patch = pad_or_crop_3d(img_patch, (dz, dy, dx))  # if single‐channel
+                img_patch = np.ascontiguousarray(img_patch).copy()
 
-        vol_transform = A.Compose([
-            A.CoarseDropout3D(
-                fill=0.5,
-                num_holes_range=(1, 4),
-                hole_depth_range=(0.1, 0.4),
-                hole_height_range=(0.1, 0.4),
-                hole_width_range=(0.1, 0.4)
-            )
-        ], p=0.5)
+                # normalize image [0..1]
+                m, M = img_patch.min(), img_patch.max()
+                if M > m:
+                    epsilon = 1e-8
+                    img_patch = (img_patch - m) / (M + epsilon)
 
-        # Apply 2D augs (slice-wise) to the image
-        img_augmented = img_transform(image=data_dict["image"])
-        image_2d_aug = img_augmented["image"]
+                # apply albumentations if needed
+                if self.image_transforms:
+                    aug = self.image_transforms(image=img_patch)
+                    img_patch = aug["image"]
 
-        # Apply volumetric augs
-        vol_augmented = vol_transform(volume=image_2d_aug)
-        data_dict["image"] = vol_augmented["volume"]
+                # ensure shape => (1, D, H, W) if single‐channel
+                if img_patch.ndim == 3:
+                    img_patch = img_patch[None, ...]
 
-        # Convert to torch tensors, ensure shape is [C, Z, Y, X]
-        if data_dict["image"].ndim == 3:
-            data_dict["image"] = data_dict["image"][None, ...]
-        data_dict["image"] = torch.from_numpy(np.ascontiguousarray(data_dict["image"]))
+                data_dict["image"] = torch.from_numpy(img_patch)
 
-        for task_name in self.targets.keys():
-            tgt = data_dict[task_name]
-            if tgt.ndim == 3 and task_name.lower() != "normals":
-                tgt = tgt[None, ...]
-            data_dict[task_name] = torch.from_numpy(np.ascontiguousarray(tgt))
+            data_dict[t_name] = torch.from_numpy(label_patch)
 
         return data_dict
 
-    def close(self):
-        """No-op here since we open/close inside __getitem__.
-           (Kept if you need to do something special on dataset shutdown.)"""
-        pass
+

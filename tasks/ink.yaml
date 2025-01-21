@@ -67,29 +67,6 @@ dataset_config:
   cache_file: "/patch_caches/6/" # optional, './' the location to store the cache
   volume_paths: # these are your input volumes. each must have input volume path, target volume path (from your targets defined in targets),
 
-    - input: "/home/sean/Desktop/s1_segments/1321.zarr/layers.zarr"
-      ink: "/home/sean/Desktop/s1_segments/1321.zarr/inklabels.zarr"
-      ref_label: "ink"
-
-    - input: "/home/sean/Desktop/s1_segments/1619.zarr/layers.zarr"
-      ink: "/home/sean/Desktop/s1_segments/1619.zarr/inklabels.zarr"
-      ref_label: "ink"
-
-    - input: "/home/sean/Desktop/s1_segments/3336.zarr/layers.zarr"
-      ink: "/home/sean/Desktop/s1_segments/3336.zarr/inklabels.zarr"
-      ref_label: "ink"
-
-    - input: "/home/sean/Desktop/s1_segments/4423.zarr/layers.zarr"
-      ink: "/home/sean/Desktop/s1_segments/4423.zarr/inklabels.zarr"
-      ref_label: "ink"
-
-    - input: "/home/sean/Desktop/s1_segments/5753.zarr/layers.zarr"
-      ink: "/home/sean/Desktop/s1_segments/5753.zarr/inklabels.zarr"
-      ref_label: "ink"
-
-    - input: "/home/sean/Desktop/s1_segments/51002.zarr/layers.zarr"
-      ink: "/home/sean/Desktop/s1_segments/51002.zarr/inklabels.zarr"
-      ref_label: "ink"
 
   targets:
     # the targets provided here are how the model is configured. for each entry here, the model will construct an additional

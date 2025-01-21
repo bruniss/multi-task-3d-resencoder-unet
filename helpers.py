@@ -1,8 +1,46 @@
 import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool
+import torch.nn as nn
 import fsspec
 import zarr
+
+
+def pad_or_crop_3d(arr, desired_shape, pad_value=0):
+    """Pad or crop a 3D array (D,H,W) to the desired shape."""
+    d, h, w = arr.shape
+    dd, hh, ww = desired_shape
+    out = np.full((dd, hh, ww), pad_value, dtype=arr.dtype)
+
+    # Compute the region to copy
+    dmin = min(d, dd)
+    hmin = min(h, hh)
+    wmin = min(w, ww)
+
+    out[:dmin, :hmin, :wmin] = arr[:dmin, :hmin, :wmin]
+    return out
+
+def pad_or_crop_4d(arr, desired_shape, pad_value=0):
+    """Pad or crop a 4D array (C,D,H,W) to the desired shape."""
+    c, d, h, w = arr.shape
+    cc, dd, hh, ww = desired_shape
+    out = np.full((cc, dd, hh, ww), pad_value, dtype=arr.dtype)
+
+    # Compute the region to copy
+    cmin = min(c, cc)
+    dmin = min(d, dd)
+    hmin = min(h, hh)
+    wmin = min(w, ww)
+
+    out[:cmin, :dmin, :hmin, :wmin] = arr[:cmin, :dmin, :hmin, :wmin]
+    return out
+
+def init_weights_he(module, neg_slope=1e-2):
+    if isinstance(module, (nn.Conv2d, nn.Conv3d,
+                           nn.ConvTranspose2d, nn.ConvTranspose3d)):
+        nn.init.kaiming_normal_(module.weight, a=neg_slope)
+        if module.bias is not None:
+            nn.init.constant_(module.bias, 0)
 
 def check_patch_chunk_xyz(
     chunk,

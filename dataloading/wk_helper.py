@@ -103,6 +103,12 @@ def slice_and_reorder_volume(array, shape_format, start_pos, patch_size):
         patch = array[x:x+dx, y:y+dy, z:z+dz, 0]
         patch = patch.transpose(2, 1, 0)
 
+    elif shape_format == 'zyxc':
+        # data is (Z, Y, X, C)
+        # If you want the result as (C, Z, Y, X), do:
+        patch = array[z:z + dz, y:y + dy, x:x + dx, :]
+        patch = patch.transpose(3, 0, 1, 2)
+
     else:
         # Unknown format, or just default to "zyx" logic
         patch = array[z:z+dz, y:y+dy, x:x+dx]
